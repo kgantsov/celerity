@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kgantsov/celerity/internal/celerity"
+	"github.com/kgantsov/celerity"
 )
 
 // shutdownTimeout bounds how long we wait for all components (broker,
