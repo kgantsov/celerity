@@ -10,7 +10,6 @@ type BrokerConfig struct {
 	URL           string
 	Queues        []string
 	PrefetchCount int
-	AcksLate      bool
 }
 
 type Broker interface {

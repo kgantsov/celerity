@@ -18,6 +18,3 @@ func (m *MockDelivery) Nack(multiple bool) error {
 	return args.Error(0)
 }
 
-func (m *MockDelivery) SetAcksLate(acksLate bool) {
-	m.Called(acksLate)
-}

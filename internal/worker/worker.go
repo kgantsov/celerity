@@ -53,20 +53,28 @@ func (w *Worker) Start(ctx context.Context) {
 				task := job.GetTask()
 				log.Printf("Processing a task: %+v", task)
 
+				if !w.config.AcksLate {
+					task.Delivery.Ack(false)
+				}
+
 				result, err := w.registry.Execute(task.Task, task.Args, task.Kwargs)
 
 				if err != nil {
 					log.Printf("Error executing task: %s", err.Error())
-					switch err {
-					case registry.ErrTaskNotFound, registry.ErrTooManyArguments, registry.ErrInvalidArgumentType, registry.ErrMissingArgument:
-						task.Delivery.Ack(false)
-					default:
-						log.Printf("Republishing failed task: %s", err.Error())
-						task.Delivery.Nack(false)
+					if w.config.AcksLate {
+						switch err {
+						case registry.ErrTaskNotFound, registry.ErrTooManyArguments, registry.ErrInvalidArgumentType, registry.ErrMissingArgument:
+							task.Delivery.Ack(false)
+						default:
+							log.Printf("Republishing failed task: %s", err.Error())
+							task.Delivery.Nack(false)
+						}
 					}
 				} else {
 					log.Printf("Task result: %v\n", result)
-					task.Delivery.Ack(false)
+					if w.config.AcksLate {
+						task.Delivery.Ack(false)
+					}
 				}
 
 				job.GetWaitGroup().Done()

@@ -18,10 +18,10 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, tk *task.Task) {
+func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, tk *task.Task, config WorkerConfig) {
 	t.Helper()
 	pool := make(chan chan Job, 1)
-	w := NewWorker(reg, pool, WorkerConfig{Count: 1})
+	w := NewWorker(reg, pool, config)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	w.Start(ctx)
@@ -55,7 +55,7 @@ func TestWorker_successAcks(t *testing.T) {
 			delivery.On("Ack", false).Return(nil)
 
 			tk := &task.Task{Task: "add", Args: tt.args, Kwargs: tt.kwargs, Delivery: delivery}
-			runWorkerJob(t, reg, tk)
+			runWorkerJob(t, reg, tk, WorkerConfig{Count: 1})
 
 			delivery.AssertCalled(t, "Ack", false)
 			delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -99,7 +99,7 @@ func TestWorker_registryErrorAcks(t *testing.T) {
 			delivery.On("Ack", false).Return(nil)
 
 			tk := &task.Task{Task: tt.taskName, Args: tt.args, Kwargs: tt.kwargs, Delivery: delivery}
-			runWorkerJob(t, reg, tk)
+			runWorkerJob(t, reg, tk, WorkerConfig{Count: 1})
 
 			delivery.AssertCalled(t, "Ack", false)
 			delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -107,6 +107,7 @@ func TestWorker_registryErrorAcks(t *testing.T) {
 	}
 }
 
+// AcksLate=true: transient errors nack after execution so the task is requeued.
 func TestWorker_businessErrorNacks(t *testing.T) {
 	reg := registry.NewTaskRegistry()
 	assert.NoError(t, reg.Register("fail", func() error { return errors.New("transient") }))
@@ -115,10 +116,25 @@ func TestWorker_businessErrorNacks(t *testing.T) {
 	delivery.On("Nack", false).Return(nil)
 
 	tk := &task.Task{Task: "fail", Args: []any{}, Kwargs: map[string]any{}, Delivery: delivery}
-	runWorkerJob(t, reg, tk)
+	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: true})
 
 	delivery.AssertCalled(t, "Nack", false)
 	delivery.AssertNotCalled(t, "Ack", mock.Anything)
+}
+
+// AcksLate=false: delivery is acked before execution regardless of outcome.
+func TestWorker_acksLateFalse_businessErrorAcks(t *testing.T) {
+	reg := registry.NewTaskRegistry()
+	assert.NoError(t, reg.Register("fail", func() error { return errors.New("transient") }))
+
+	delivery := &MockDelivery{}
+	delivery.On("Ack", false).Return(nil)
+
+	tk := &task.Task{Task: "fail", Args: []any{}, Kwargs: map[string]any{}, Delivery: delivery}
+	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: false})
+
+	delivery.AssertCalled(t, "Ack", false)
+	delivery.AssertNotCalled(t, "Nack", mock.Anything)
 }
 
 func TestWorker_stopWithoutStart(t *testing.T) {

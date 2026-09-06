@@ -237,15 +237,6 @@ func (b *RabbitMQBroker) consumeWorker(ctx context.Context, wg *sync.WaitGroup, 
 					msg.Nack(false, false)
 					continue
 				}
-				// Set the acks_late flag on the task's delivery to ignore the actual ack/nack
-				// behavior in the worker. The worker will ack/nack based on the result of the
-				// task execution, but the delivery will be acked/nacked here based on the
-				// broker's configuration.
-				task.Delivery.SetAcksLate(b.config.AcksLate)
-				if !b.config.AcksLate {
-					msg.Ack(false) // Ack immediately if not using acks_late
-				}
-
 				select {
 				case b.taskChan <- task:
 				case <-ctx.Done():

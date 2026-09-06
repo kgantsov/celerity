@@ -44,7 +44,6 @@ func WithPrefetchCount(prefetchCount int) Option {
 func WithAcksLate(acksLate bool) Option {
 	return func(s *Celerity) {
 		s.config.Worker.AcksLate = acksLate
-		s.config.Broker.AcksLate = acksLate
 	}
 }
 
@@ -60,7 +59,6 @@ func NewCelerity(brokerURL string, queues []string, opts ...Option) *Celerity {
 				URL:           brokerURL,
 				Queues:        queues,
 				PrefetchCount: 5, // default prefetch count
-				AcksLate:      false,
 			},
 			Worker: worker.WorkerConfig{
 				Count:    5,
