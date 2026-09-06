@@ -6,6 +6,13 @@ import (
 	"github.com/kgantsov/celerity/internal/task"
 )
 
+type BrokerConfig struct {
+	URL           string
+	Queues        []string
+	PrefetchCount int
+	AcksLate      bool
+}
+
 type Broker interface {
 	// Start starts the broker and begins consuming tasks from the queue.
 	Start()

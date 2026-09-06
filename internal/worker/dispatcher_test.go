@@ -15,7 +15,7 @@ import (
 func TestDispatcher_StopWithoutRun(t *testing.T) {
 	reg := registry.NewTaskRegistry()
 	jobQueue := make(chan Job, 1)
-	d := NewDispatcher(reg, jobQueue, 2)
+	d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2})
 	assert.NotPanics(t, func() { d.Stop() })
 }
 
@@ -32,7 +32,7 @@ func TestDispatcher_RunStop(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := registry.NewTaskRegistry()
 			jobQueue := make(chan Job, 1)
-			d := NewDispatcher(reg, jobQueue, tt.maxWorkers)
+			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: tt.maxWorkers})
 
 			ctx, cancel := context.WithCancel(context.Background())
 			d.Run(ctx)
@@ -60,7 +60,7 @@ func TestDispatcher_DispatchesJobsToWorkers(t *testing.T) {
 			assert.NoError(t, reg.Register("noop", func() error { return nil }))
 
 			jobQueue := make(chan Job, tt.jobCount)
-			d := NewDispatcher(reg, jobQueue, tt.workers)
+			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: tt.workers})
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()

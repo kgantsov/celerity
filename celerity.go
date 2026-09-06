@@ -10,15 +10,17 @@ import (
 	"github.com/kgantsov/celerity/internal/worker"
 )
 
+type Config struct {
+	Broker broker.BrokerConfig
+	Worker worker.WorkerConfig
+}
+
 type Celerity struct {
-	broker        broker.Broker
-	dispatcher    *worker.Dispatcher
-	registry      *registry.TaskRegistry
-	broker_url    string
-	queues        []string
-	prefetchCount int
-	workers       int
-	wg            sync.WaitGroup
+	broker     broker.Broker
+	dispatcher *worker.Dispatcher
+	registry   *registry.TaskRegistry
+	config     Config
+	wg         sync.WaitGroup
 }
 
 // Option defines a function type that modifies the Server config
@@ -27,28 +29,44 @@ type Option func(*Celerity)
 // WithWorkers sets the number of workers for the Celerity server
 func WithWorkers(workers int) Option {
 	return func(s *Celerity) {
-		s.workers = workers
+		s.config.Worker.Count = workers
 	}
 }
 
 // WithPrefetchCount sets the prefetch count for the Celerity server
 func WithPrefetchCount(prefetchCount int) Option {
 	return func(s *Celerity) {
-		s.prefetchCount = prefetchCount
+		s.config.Broker.PrefetchCount = prefetchCount
+	}
+}
+
+// WithAcksLate sets the acksLate option for the Celerity server
+func WithAcksLate(acksLate bool) Option {
+	return func(s *Celerity) {
+		s.config.Worker.AcksLate = acksLate
+		s.config.Broker.AcksLate = acksLate
 	}
 }
 
 // NewCelerity creates a new Celerity server with the given broker URL, queues,
 // and optional configurations.
-func NewCelerity(broker_url string, queues []string, opts ...Option) *Celerity {
+func NewCelerity(brokerURL string, queues []string, opts ...Option) *Celerity {
 	// Initialize with default values
 	registry := registry.NewTaskRegistry()
 	server := &Celerity{
-		registry:      registry,
-		broker_url:    broker_url,
-		queues:        queues,
-		workers:       5, // default number of workers
-		prefetchCount: 5, // default prefetch count
+		registry: registry,
+		config: Config{
+			Broker: broker.BrokerConfig{
+				URL:           brokerURL,
+				Queues:        queues,
+				PrefetchCount: 5, // default prefetch count
+				AcksLate:      false,
+			},
+			Worker: worker.WorkerConfig{
+				Count:    5,
+				AcksLate: false,
+			},
+		},
 	}
 
 	// Apply any provided options
@@ -68,13 +86,13 @@ func (c *Celerity) Start(ctx context.Context) {
 	JobQueue := make(chan worker.Job)
 
 	if c.broker == nil {
-		c.broker = broker.NewRabbitMQBroker(ctx, c.broker_url, c.queues, c.prefetchCount)
+		c.broker = broker.NewRabbitMQBroker(ctx, c.config.Broker)
 	}
 
 	// Start the broker background routines
 	c.broker.Start()
 
-	c.dispatcher = worker.NewDispatcher(c.registry, JobQueue, c.workers)
+	c.dispatcher = worker.NewDispatcher(c.registry, JobQueue, c.config.Worker)
 	c.dispatcher.Run(ctx)
 
 	c.wg.Add(1)

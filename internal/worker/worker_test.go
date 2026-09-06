@@ -21,7 +21,7 @@ func TestMain(m *testing.M) {
 func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, tk *task.Task) {
 	t.Helper()
 	pool := make(chan chan Job, 1)
-	w := NewWorker(reg, pool)
+	w := NewWorker(reg, pool, WorkerConfig{Count: 1})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	w.Start(ctx)
@@ -123,6 +123,6 @@ func TestWorker_businessErrorNacks(t *testing.T) {
 
 func TestWorker_stopWithoutStart(t *testing.T) {
 	pool := make(chan chan Job, 1)
-	w := NewWorker(registry.NewTaskRegistry(), pool)
+	w := NewWorker(registry.NewTaskRegistry(), pool, WorkerConfig{Count: 1})
 	assert.NotPanics(t, func() { w.Stop() })
 }

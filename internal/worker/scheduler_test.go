@@ -29,7 +29,7 @@ func TestTaskScheduler_ScheduleAndStop(t *testing.T) {
 			assert.NoError(t, reg.Register("add", func(a, b int) (int, error) { return a + b, nil }, "a", "b"))
 
 			jobQueue := make(chan Job, 10)
-			d := NewDispatcher(reg, jobQueue, 2)
+			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2})
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			d.Run(ctx)

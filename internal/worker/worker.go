@@ -7,8 +7,14 @@ import (
 	"github.com/kgantsov/celerity/internal/registry"
 )
 
+type WorkerConfig struct {
+	Count    int
+	AcksLate bool
+}
+
 // Worker represents the worker that executes the job
 type Worker struct {
+	config     WorkerConfig
 	registry   *registry.TaskRegistry
 	WorkerPool chan chan Job
 	JobChannel chan Job
@@ -16,8 +22,9 @@ type Worker struct {
 	cancel     context.CancelFunc
 }
 
-func NewWorker(registry *registry.TaskRegistry, workerPool chan chan Job) *Worker {
+func NewWorker(registry *registry.TaskRegistry, workerPool chan chan Job, config WorkerConfig) *Worker {
 	return &Worker{
+		config:     config,
 		registry:   registry,
 		WorkerPool: workerPool,
 		JobChannel: make(chan Job),
@@ -58,7 +65,7 @@ func (w *Worker) Start(ctx context.Context) {
 						task.Delivery.Nack(false)
 					}
 				} else {
-					log.Printf("Task result: %v. Acknowledging...\n", result)
+					log.Printf("Task result: %v\n", result)
 					task.Delivery.Ack(false)
 				}
 

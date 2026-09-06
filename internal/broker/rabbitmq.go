@@ -31,10 +31,8 @@ func (m *Message) Nack(requeue bool) error {
 
 // RabbitMQBroker manages the connection and workers for RabbitMQ.
 type RabbitMQBroker struct {
-	url           string
-	queues        []string
-	prefetchCount int
-	taskChan      chan *task.Task
+	config   BrokerConfig
+	taskChan chan *task.Task
 	// parentCtx signals that the caller wants to stop consuming new messages
 	// (e.g. Ctrl+C). Consumer goroutines exit when it fires, but the AMQP
 	// connection is kept alive so in-flight tasks can still ack/nack their
@@ -50,19 +48,17 @@ type RabbitMQBroker struct {
 // NewRabbitMQBroker initializes a new broker instance. parentCtx signals when
 // to stop consuming (e.g. on Ctrl+C); call Close() separately to actually tear
 // down the AMQP connection once all in-flight tasks have finished.
-func NewRabbitMQBroker(parentCtx context.Context, url string, queues []string, prefetchCount int) *RabbitMQBroker {
+func NewRabbitMQBroker(parentCtx context.Context, config BrokerConfig) *RabbitMQBroker {
 	// Derive ctx from Background, not from parentCtx. This keeps the AMQP
 	// connection alive even after parentCtx is canceled, so workers can still
 	// ack deliveries for tasks they picked up before the shutdown signal.
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RabbitMQBroker{
-		url:           url,
-		queues:        queues,
-		prefetchCount: prefetchCount,
-		taskChan:      make(chan *task.Task),
-		parentCtx:     parentCtx,
-		ctx:           ctx,
-		cancel:        cancel,
+		config:    config,
+		taskChan:  make(chan *task.Task),
+		parentCtx: parentCtx,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -132,7 +128,7 @@ func (b *RabbitMQBroker) GetTask(ctx context.Context) (*task.Task, error) {
 func (b *RabbitMQBroker) manageConnection() {
 	for {
 		log.Println("[Broker] Attempting to connect to RabbitMQ...")
-		conn, err := amqp.Dial(b.url)
+		conn, err := amqp.Dial(b.config.URL)
 		if err != nil {
 			log.Printf("[Broker] Connection failed: %v. Retrying in 5s...", err)
 			select {
@@ -147,7 +143,7 @@ func (b *RabbitMQBroker) manageConnection() {
 		connCtx, cancelConn := context.WithCancel(b.ctx)
 		var workerWg sync.WaitGroup
 
-		for _, q := range b.queues {
+		for _, q := range b.config.Queues {
 			workerWg.Add(1)
 			go b.consumeWorker(connCtx, &workerWg, conn, q)
 		}
@@ -202,7 +198,7 @@ func (b *RabbitMQBroker) consumeWorker(ctx context.Context, wg *sync.WaitGroup, 
 			}
 		}
 
-		ch.Qos(b.prefetchCount, 0, false)
+		ch.Qos(b.config.PrefetchCount, 0, false)
 
 		msgs, err := ch.Consume(queueName, "", false, false, false, false, nil)
 		if err != nil {
@@ -240,6 +236,14 @@ func (b *RabbitMQBroker) consumeWorker(ctx context.Context, wg *sync.WaitGroup, 
 					log.Printf("[%s] Error parsing task: %v. Nacking...", queueName, err)
 					msg.Nack(false, false)
 					continue
+				}
+				// Set the acks_late flag on the task's delivery to ignore the actual ack/nack
+				// behavior in the worker. The worker will ack/nack based on the result of the
+				// task execution, but the delivery will be acked/nacked here based on the
+				// broker's configuration.
+				task.Delivery.SetAcksLate(b.config.AcksLate)
+				if !b.config.AcksLate {
+					msg.Ack(false) // Ack immediately if not using acks_late
 				}
 
 				select {

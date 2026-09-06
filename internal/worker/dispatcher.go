@@ -7,21 +7,23 @@ import (
 )
 
 type Dispatcher struct {
+	config     WorkerConfig
 	registry   *registry.TaskRegistry
 	WorkerPool chan chan Job
-	MaxWorkers int
 	JobQueue   chan Job
 	ctx        context.Context
 	cancel     context.CancelFunc
 	Workers    []*Worker
 }
 
-func NewDispatcher(registry *registry.TaskRegistry, JobQueue chan Job, maxWorkers int) *Dispatcher {
-	WorkerPool := make(chan chan Job, maxWorkers)
+func NewDispatcher(
+	registry *registry.TaskRegistry, JobQueue chan Job, config WorkerConfig,
+) *Dispatcher {
+	WorkerPool := make(chan chan Job, config.Count)
 	return &Dispatcher{
+		config:     config,
 		registry:   registry,
 		WorkerPool: WorkerPool,
-		MaxWorkers: maxWorkers,
 		JobQueue:   JobQueue,
 		Workers:    []*Worker{},
 	}
@@ -36,8 +38,8 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	// starting n number of workers
-	for i := 0; i < d.MaxWorkers; i++ {
-		worker := NewWorker(d.registry, d.WorkerPool)
+	for i := 0; i < d.config.Count; i++ {
+		worker := NewWorker(d.registry, d.WorkerPool, d.config)
 		worker.Start(d.ctx)
 		d.Workers = append(d.Workers, worker)
 	}

@@ -10,14 +10,29 @@ import (
 
 type CeleryDelivery struct {
 	delivery amqp.Delivery
+	acksLate bool
 }
 
 func (d *CeleryDelivery) Ack(multiple bool) error {
-	return d.delivery.Ack(multiple)
+	// Only ack if acksLate is true, otherwise the broker will auto-ack the message
+	if d.acksLate {
+		return d.delivery.Ack(multiple)
+	}
+
+	return nil
 }
 
 func (d *CeleryDelivery) Nack(multiple bool) error {
-	return d.delivery.Ack(multiple)
+	// Only nack if acksLate is true, otherwise the broker will auto-nack the message
+	if d.acksLate {
+		return d.delivery.Nack(multiple, true)
+	}
+
+	return nil
+}
+
+func (d *CeleryDelivery) SetAcksLate(acksLate bool) {
+	d.acksLate = acksLate
 }
 
 // CeleryV1Payload represents the body array: [args, kwargs, embed]

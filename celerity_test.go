@@ -19,17 +19,17 @@ func TestMain(m *testing.M) {
 
 func TestNewCelerity_defaults(t *testing.T) {
 	c := NewCelerity("amqp://guest:guest@localhost", []string{"default"})
-	assert.Equal(t, 5, c.workers)
-	assert.Equal(t, 5, c.prefetchCount)
-	assert.Equal(t, []string{"default"}, c.queues)
+	assert.Equal(t, 5, c.config.Worker.Count)
+	assert.Equal(t, 5, c.config.Broker.PrefetchCount)
+	assert.Equal(t, []string{"default"}, c.config.Broker.Queues)
 }
 
 func TestNewCelerity_options(t *testing.T) {
 	tests := []struct {
-		name               string
-		opts               []Option
-		wantWorkers        int
-		wantPrefetchCount  int
+		name              string
+		opts              []Option
+		wantWorkers       int
+		wantPrefetchCount int
 	}{
 		{
 			name:              "default values",
@@ -60,8 +60,8 @@ func TestNewCelerity_options(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := NewCelerity("amqp://localhost", []string{"q"}, tt.opts...)
-			assert.Equal(t, tt.wantWorkers, c.workers)
-			assert.Equal(t, tt.wantPrefetchCount, c.prefetchCount)
+			assert.Equal(t, tt.wantWorkers, c.config.Worker.Count)
+			assert.Equal(t, tt.wantPrefetchCount, c.config.Broker.PrefetchCount)
 		})
 	}
 }
@@ -119,6 +119,10 @@ func (m *mockDelivery) Ack(multiple bool) error {
 
 func (m *mockDelivery) Nack(multiple bool) error {
 	return m.Called(multiple).Error(0)
+}
+
+func (m *mockDelivery) SetAcksLate(acksLate bool) {
+	m.Called(acksLate)
 }
 
 func TestCelerity_StartStop(t *testing.T) {
