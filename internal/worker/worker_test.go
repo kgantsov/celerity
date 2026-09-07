@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kgantsov/celerity/internal/broker"
+	celery "github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
-	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -20,10 +21,33 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, tk *task.Task, config WorkerConfig, b *MockBroker) {
+func newTestMsg(
+	t *testing.T,
+	taskName string,
+	args []any,
+	kwargs map[string]any,
+	delivery broker.Delivery,
+	replyTo, corrID string,
+	retryCount int8,
+) *broker.RawMessage {
 	t.Helper()
+	body, err := json.Marshal([]any{args, kwargs, nil})
+	require.NoError(t, err)
+	return &broker.RawMessage{
+		Headers:       map[string]any{"id": "test-id", "task": taskName, "retries": retryCount},
+		Body:          body,
+		ReplyTo:       replyTo,
+		CorrelationID: corrID,
+		Delivery:      delivery,
+	}
+}
+
+func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, msg *broker.RawMessage, config WorkerConfig, b *MockBroker) {
+	t.Helper()
+	proto, err := celery.NewProtocol("2.0")
+	require.NoError(t, err)
 	pool := make(chan chan Job, 1)
-	w := NewWorker(reg, pool, config, b)
+	w := NewWorker(reg, pool, config, b, proto)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	w.Start(ctx)
@@ -31,7 +55,7 @@ func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, tk *task.Task, confi
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	job := NewJob(tk, &wg)
+	job := NewJob(msg, &wg)
 
 	jobCh := <-pool
 	jobCh <- job
@@ -60,8 +84,8 @@ func TestWorker_successAcks(t *testing.T) {
 			delivery := &MockDelivery{}
 			delivery.On("Ack", false).Return(nil)
 
-			tk := &task.Task{Task: "add", Args: tt.args, Kwargs: tt.kwargs, Delivery: delivery}
-			runWorkerJob(t, reg, tk, WorkerConfig{Count: 1}, &MockBroker{})
+			msg := newTestMsg(t, "add", tt.args, tt.kwargs, delivery, "", "", 0)
+			runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, &MockBroker{})
 
 			delivery.AssertCalled(t, "Ack", false)
 			delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -108,8 +132,8 @@ func TestWorker_registryErrorAcks(t *testing.T) {
 			delivery := &MockDelivery{}
 			delivery.On("Ack", false).Return(nil)
 
-			tk := &task.Task{Task: tt.taskName, Args: tt.args, Kwargs: tt.kwargs, Delivery: delivery}
-			runWorkerJob(t, reg, tk, WorkerConfig{Count: 1}, &MockBroker{})
+			msg := newTestMsg(t, tt.taskName, tt.args, tt.kwargs, delivery, "", "", 0)
+			runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, &MockBroker{})
 
 			delivery.AssertCalled(t, "Ack", false)
 			delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -129,12 +153,12 @@ func TestWorker_businessErrorRetries(t *testing.T) {
 	delivery.On("Ack", false).Return(nil)
 
 	b := &MockBroker{}
-	b.On("PublishTask", mock.Anything).Return(nil)
+	b.On("PublishMessage", mock.Anything).Return(nil)
 
-	tk := &task.Task{Task: "fail", Args: []any{}, Kwargs: map[string]any{}, Delivery: delivery}
-	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: true}, b)
+	msg := newTestMsg(t, "fail", []any{}, map[string]any{}, delivery, "", "", 0)
+	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1, AcksLate: true}, b)
 
-	b.AssertCalled(t, "PublishTask", mock.Anything)
+	b.AssertCalled(t, "PublishMessage", mock.Anything)
 	delivery.AssertCalled(t, "Ack", false)
 	delivery.AssertNotCalled(t, "Nack", mock.Anything)
 }
@@ -149,8 +173,8 @@ func TestWorker_acksLateFalse_businessErrorAcks(t *testing.T) {
 	delivery := &MockDelivery{}
 	delivery.On("Ack", false).Return(nil)
 
-	tk := &task.Task{Task: "fail", Args: []any{}, Kwargs: map[string]any{}, Delivery: delivery}
-	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: false}, &MockBroker{})
+	msg := newTestMsg(t, "fail", []any{}, map[string]any{}, delivery, "", "", 0)
+	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1, AcksLate: false}, &MockBroker{})
 
 	delivery.AssertCalled(t, "Ack", false)
 	delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -158,7 +182,9 @@ func TestWorker_acksLateFalse_businessErrorAcks(t *testing.T) {
 
 func TestWorker_stopWithoutStart(t *testing.T) {
 	pool := make(chan chan Job, 1)
-	w := NewWorker(registry.NewTaskRegistry(), pool, WorkerConfig{Count: 1}, &MockBroker{})
+	proto, err := celery.NewProtocol("2.0")
+	require.NoError(t, err)
+	w := NewWorker(registry.NewTaskRegistry(), pool, WorkerConfig{Count: 1}, &MockBroker{}, proto)
 	assert.NotPanics(t, func() { w.Stop() })
 }
 
@@ -171,26 +197,21 @@ func TestWorker_publishesSuccessResult(t *testing.T) {
 	delivery := &MockDelivery{}
 	delivery.On("Ack", false).Return(nil)
 
-	var capturedBody []byte
+	var capturedMsg *broker.RawMessage
 	b := &MockBroker{}
-	b.On("PublishResult", "reply-queue", "corr-id-123", mock.Anything).
-		Run(func(args mock.Arguments) { capturedBody = args[2].([]byte) }).
+	b.On("PublishMessage", mock.Anything).
+		Run(func(args mock.Arguments) { capturedMsg = args[0].(*broker.RawMessage) }).
 		Return(nil)
 
-	tk := &task.Task{
-		Task:          "add",
-		Args:          []any{float64(3), float64(4)},
-		Kwargs:        map[string]any{},
-		Delivery:      delivery,
-		ReplyTo:       "reply-queue",
-		CorrelationId: "corr-id-123",
-	}
-	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1}, b)
+	msg := newTestMsg(t, "add", []any{float64(3), float64(4)}, map[string]any{}, delivery, "reply-queue", "corr-id-123", 0)
+	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, b)
 
-	b.AssertCalled(t, "PublishResult", "reply-queue", "corr-id-123", mock.Anything)
+	b.AssertCalled(t, "PublishMessage", mock.Anything)
+	require.NotNil(t, capturedMsg)
+	assert.Equal(t, "reply-queue", capturedMsg.Queue)
 
 	var reply map[string]any
-	require.NoError(t, json.Unmarshal(capturedBody, &reply))
+	require.NoError(t, json.Unmarshal(capturedMsg.Body, &reply))
 	assert.Equal(t, "corr-id-123", reply["task_id"])
 	assert.Equal(t, "SUCCESS", reply["status"])
 	assert.Equal(t, float64(7), reply["result"])
@@ -207,15 +228,10 @@ func TestWorker_doesNotPublishResultWithoutReplyTo(t *testing.T) {
 
 	b := &MockBroker{}
 
-	tk := &task.Task{
-		Task:     "add",
-		Args:     []any{float64(1), float64(2)},
-		Kwargs:   map[string]any{},
-		Delivery: delivery,
-	}
-	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1}, b)
+	msg := newTestMsg(t, "add", []any{float64(1), float64(2)}, map[string]any{}, delivery, "", "", 0)
+	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, b)
 
-	b.AssertNotCalled(t, "PublishResult", mock.Anything, mock.Anything, mock.Anything)
+	b.AssertNotCalled(t, "PublishMessage", mock.Anything)
 }
 
 func TestWorker_publishesFailureOnMaxRetries(t *testing.T) {
@@ -228,28 +244,21 @@ func TestWorker_publishesFailureOnMaxRetries(t *testing.T) {
 	delivery := &MockDelivery{}
 	delivery.On("Ack", false).Return(nil)
 
-	var capturedBody []byte
+	var capturedMsg *broker.RawMessage
 	b := &MockBroker{}
-	b.On("PublishResult", "reply-queue", "corr-id-456", mock.Anything).
-		Run(func(args mock.Arguments) { capturedBody = args[2].([]byte) }).
+	b.On("PublishMessage", mock.Anything).
+		Run(func(args mock.Arguments) { capturedMsg = args[0].(*broker.RawMessage) }).
 		Return(nil)
 
-	tk := &task.Task{
-		Task:          "fail",
-		Args:          []any{},
-		Kwargs:        map[string]any{},
-		Delivery:      delivery,
-		ReplyTo:       "reply-queue",
-		CorrelationId: "corr-id-456",
-		RetryCount:    2, // already at max
-	}
-	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: true}, b)
+	msg := newTestMsg(t, "fail", []any{}, map[string]any{}, delivery, "reply-queue", "corr-id-456", 2)
+	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1, AcksLate: true}, b)
 
-	b.AssertCalled(t, "PublishResult", "reply-queue", "corr-id-456", mock.Anything)
-	b.AssertNotCalled(t, "PublishTask", mock.Anything)
+	b.AssertNumberOfCalls(t, "PublishMessage", 1)
+	require.NotNil(t, capturedMsg)
+	assert.Equal(t, "reply-queue", capturedMsg.Queue)
 
 	var reply map[string]any
-	require.NoError(t, json.Unmarshal(capturedBody, &reply))
+	require.NoError(t, json.Unmarshal(capturedMsg.Body, &reply))
 	assert.Equal(t, "corr-id-456", reply["task_id"])
 	assert.Equal(t, "FAILURE", reply["status"])
 }
@@ -265,19 +274,11 @@ func TestWorker_doesNotPublishResultDuringRetry(t *testing.T) {
 	delivery.On("Ack", false).Return(nil)
 
 	b := &MockBroker{}
-	b.On("PublishTask", mock.Anything).Return(nil)
+	b.On("PublishMessage", mock.Anything).Return(nil)
 
-	tk := &task.Task{
-		Task:          "fail",
-		Args:          []any{},
-		Kwargs:        map[string]any{},
-		Delivery:      delivery,
-		ReplyTo:       "reply-queue",
-		CorrelationId: "corr-id-789",
-		RetryCount:    0,
-	}
-	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: true}, b)
+	msg := newTestMsg(t, "fail", []any{}, map[string]any{}, delivery, "reply-queue", "corr-id-789", 0)
+	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1, AcksLate: true}, b)
 
-	b.AssertCalled(t, "PublishTask", mock.Anything)
-	b.AssertNotCalled(t, "PublishResult", mock.Anything, mock.Anything, mock.Anything)
+	b.AssertCalled(t, "PublishMessage", mock.Anything)
+	b.AssertNumberOfCalls(t, "PublishMessage", 1)
 }

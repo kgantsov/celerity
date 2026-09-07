@@ -3,21 +3,21 @@ package worker
 import (
 	"sync"
 
-	"github.com/kgantsov/celerity/internal/task"
+	"github.com/kgantsov/celerity/internal/broker"
 )
 
 // Job represents the job to be run
 type Job struct {
-	task *task.Task
-	wg   *sync.WaitGroup
+	msg *broker.RawMessage
+	wg  *sync.WaitGroup
 }
 
-func NewJob(t *task.Task, wg *sync.WaitGroup) Job {
-	return Job{task: t, wg: wg}
+func NewJob(msg *broker.RawMessage, wg *sync.WaitGroup) Job {
+	return Job{msg: msg, wg: wg}
 }
 
-func (j *Job) GetTask() *task.Task {
-	return j.task
+func (j *Job) GetMessage() *broker.RawMessage {
+	return j.msg
 }
 
 func (j *Job) GetWaitGroup() *sync.WaitGroup {

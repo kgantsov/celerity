@@ -2,12 +2,12 @@ package celerity
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/kgantsov/celerity/internal/broker"
-	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -136,16 +136,19 @@ func TestCelerity_StartStop(t *testing.T) {
 		}
 	})
 
+	body, err := json.Marshal([]any{[]any{float64(1), float64(2)}, map[string]any{}, nil})
+	require.NoError(t, err)
+	msg := &broker.RawMessage{
+		Headers:  map[string]any{"id": "test-id", "task": "add", "retries": int8(0)},
+		Body:     body,
+		Delivery: delivery,
+	}
+
 	b := &broker.MockBroker{}
 	b.On("Start").Return()
 	b.On("Close").Return()
-	b.On("GetTask", mock.Anything).Once().Return(&task.Task{
-		Task:     "add",
-		Args:     []any{float64(1), float64(2)},
-		Kwargs:   map[string]any{},
-		Delivery: delivery,
-	}, nil)
-	b.On("GetTask", mock.Anything).Return((*task.Task)(nil), context.Canceled)
+	b.On("GetMessage", mock.Anything).Once().Return(msg, nil)
+	b.On("GetMessage", mock.Anything).Return((*broker.RawMessage)(nil), context.Canceled)
 
 	c := NewCelerity("amqp://localhost", []string{"q"}, WithWorkers(2))
 	c.broker = b
@@ -178,7 +181,7 @@ func TestCelerity_BrokerError(t *testing.T) {
 	broker := &broker.MockBroker{}
 	broker.On("Start").Return()
 	broker.On("Close").Return()
-	broker.On("GetTask", mock.Anything).Return(nil, errors.New("connection lost"))
+	broker.On("GetMessage", mock.Anything).Return(nil, errors.New("connection lost"))
 
 	c := NewCelerity("amqp://localhost", []string{"q"})
 	c.broker = broker

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/kgantsov/celerity/internal/broker"
+	"github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
 	"github.com/kgantsov/celerity/internal/worker"
 )
@@ -16,11 +17,13 @@ type Config struct {
 }
 
 type Celerity struct {
-	broker     broker.Broker
-	dispatcher *worker.Dispatcher
-	registry   *registry.TaskRegistry
-	config     Config
-	wg         sync.WaitGroup
+	broker       broker.Broker
+	dispatcher   *worker.Dispatcher
+	registry     *registry.TaskRegistry
+	config       Config
+	wg           sync.WaitGroup
+	protoVersion string
+	proto        celery.Protocol
 }
 
 // Option defines a function type that modifies the Server config
@@ -50,7 +53,6 @@ func WithAcksLate(acksLate bool) Option {
 // NewCelerity creates a new Celerity server with the given broker URL, queues,
 // and optional configurations.
 func NewCelerity(brokerURL string, queues []string, opts ...Option) *Celerity {
-	// Initialize with default values
 	registry := registry.NewTaskRegistry()
 	server := &Celerity{
 		registry: registry,
@@ -65,12 +67,16 @@ func NewCelerity(brokerURL string, queues []string, opts ...Option) *Celerity {
 				AcksLate: false,
 			},
 		},
+		protoVersion: "2.0",
 	}
 
 	// Apply any provided options
 	for _, opt := range opts {
 		opt(server)
 	}
+
+	proto, _ := celery.NewProtocol(server.protoVersion)
+	server.proto = proto
 
 	return server
 }
@@ -90,7 +96,7 @@ func (c *Celerity) Start(ctx context.Context) {
 	// Start the broker background routines
 	c.broker.Start()
 
-	c.dispatcher = worker.NewDispatcher(c.registry, JobQueue, c.config.Worker, c.broker)
+	c.dispatcher = worker.NewDispatcher(c.registry, JobQueue, c.config.Worker, c.broker, c.proto)
 	c.dispatcher.Run(ctx)
 
 	c.wg.Add(1)
@@ -99,7 +105,7 @@ func (c *Celerity) Start(ctx context.Context) {
 		var jobWg sync.WaitGroup
 		defer jobWg.Wait()
 		for {
-			t, err := c.broker.GetTask(ctx)
+			t, err := c.broker.GetMessage(ctx)
 			if err != nil {
 				log.Printf("Broker stopped: %v", err)
 				return

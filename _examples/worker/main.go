@@ -22,13 +22,17 @@ func main() {
 		context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	celerity := celerity.NewCelerity(
+	celerity, err := celerity.NewCelerity(
 		"amqp://guest:guest@localhost:5672/",
 		[]string{"celery"},
 		celerity.WithWorkers(5),
 		celerity.WithPrefetchCount(5),
 		celerity.WithAcksLate(true),
 	)
+
+	if err != nil {
+		log.Fatalf("Failed to create Celerity instance: %v", err)
+	}
 
 	celerity.RegisterTask(
 		"hello.add", AddTask, []string{"a", "b"},

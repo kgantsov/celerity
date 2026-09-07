@@ -1,10 +1,10 @@
 # Celerity
 
-A Go implementation of a [Celery](https://docs.celeryq.dev/)-compatible task queue worker. Celerity consumes Celery v1 messages from RabbitMQ and dispatches them to registered Go handler functions, letting Python Celery producers talk to Go consumers.
+A Go implementation of a [Celery](https://docs.celeryq.dev/)-compatible task queue worker. Celerity consumes Celery v2 messages from RabbitMQ and dispatches them to registered Go handler functions, letting Python Celery producers talk to Go consumers.
 
 ## Features
 
-- Consumes tasks published by Python Celery (v1 message format)
+- Consumes tasks published by Python Celery (v2 message format)
 - Positional and keyword argument support with automatic type coercion from JSON
 - Configurable worker pool and AMQP prefetch count
 - Optional late acknowledgement (`AcksLate`)
@@ -125,7 +125,7 @@ The task is republished to the same queue and retried up to `MaxRetries` times. 
 celerity.go              # Public API: NewCelerity, Start, Stop, RegisterTask
 internal/
   broker/                # RabbitMQ AMQP consumer with auto-reconnect
-  protocol/celeryv2/     # Celery v1 message parser
+  protocol/celery/       # Celery v2 message parser
   registry/              # Task name → handler function mapping (reflection-based)
   worker/                # Dispatcher + worker pool
   task/                  # Task struct

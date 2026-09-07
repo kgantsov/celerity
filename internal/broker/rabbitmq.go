@@ -2,38 +2,18 @@ package broker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 
-	"github.com/kgantsov/celerity/internal/protocol/celeryv2"
-	"github.com/kgantsov/celerity/internal/task"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// Message wraps the RabbitMQ delivery to allow manual Ack/Nack by the caller.
-type Message struct {
-	Queue    string
-	Body     []byte
-	delivery amqp.Delivery
-}
-
-// Ack acknowledges the message, removing it from the queue.
-func (m *Message) Ack() error {
-	return m.delivery.Ack(false)
-}
-
-// Nack rejects the message. If requeue is true, it goes back in the queue.
-func (m *Message) Nack(requeue bool) error {
-	return m.delivery.Nack(false, requeue)
-}
-
 // RabbitMQBroker manages the connection and workers for RabbitMQ.
 type RabbitMQBroker struct {
-	config   BrokerConfig
-	taskChan chan *task.Task
+	config  BrokerConfig
+	msgChan chan *RawMessage
 	// parentCtx signals that the caller wants to stop consuming new messages
 	// (e.g. Ctrl+C). Consumer goroutines exit when it fires, but the AMQP
 	// connection is kept alive so in-flight tasks can still ack/nack their
@@ -58,7 +38,7 @@ func NewRabbitMQBroker(parentCtx context.Context, config BrokerConfig) *RabbitMQ
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RabbitMQBroker{
 		config:    config,
-		taskChan:  make(chan *task.Task),
+		msgChan:   make(chan *RawMessage),
 		parentCtx: parentCtx,
 		ctx:       ctx,
 		cancel:    cancel,
@@ -74,11 +54,11 @@ func (b *RabbitMQBroker) Start() {
 	}()
 }
 
-// GetTask blocks until a task is available on ANY of the configured queues,
+// GetMessage blocks until a task is available on ANY of the configured queues,
 // or until the broker is closed.
-func (b *RabbitMQBroker) GetTask(ctx context.Context) (*task.Task, error) {
+func (b *RabbitMQBroker) GetMessage(ctx context.Context) (*RawMessage, error) {
 	select {
-	case task, ok := <-b.taskChan:
+	case task, ok := <-b.msgChan:
 		if !ok {
 			return nil, fmt.Errorf("broker is closed")
 		}
@@ -92,7 +72,7 @@ func (b *RabbitMQBroker) GetTask(ctx context.Context) (*task.Task, error) {
 	}
 }
 
-func (b *RabbitMQBroker) PublishTask(task *task.Task) error {
+func (b *RabbitMQBroker) PublishMessage(msg *RawMessage) error {
 	b.connMu.RLock()
 	conn := b.conn
 	b.connMu.RUnlock()
@@ -107,56 +87,57 @@ func (b *RabbitMQBroker) PublishTask(task *task.Task) error {
 	}
 	defer ch.Close()
 
-	body, err := json.Marshal([]any{task.Args, task.Kwargs, map[string]any{}})
-	if err != nil {
-		return fmt.Errorf("failed to serialize task: %w", err)
-	}
+	// body, err := json.Marshal([]any{task.Args, task.Kwargs, map[string]any{}})
+	// if err != nil {
+	// 	return fmt.Errorf("failed to serialize task: %w", err)
+	// }
 
 	return ch.Publish(
-		"",             // default exchange
-		task.QueueName, // routing key == queue name
+		"",        // default exchange
+		msg.Queue, // routing key == queue name
 		false,
 		false,
 		amqp.Publishing{
 			ContentType: "application/json",
-			Headers: amqp.Table{
-				"id":      task.ID,
-				"task":    task.Task,
-				"retries": task.RetryCount,
-			},
-			Body: body,
+			Headers:     msg.Headers,
+			// Headers: amqp.Table{
+			// 	"id":      task.ID,
+			// 	"task":    task.Task,
+			// 	"retries": task.RetryCount,
+			// },
+			Body: msg.Body,
 		},
 	)
 }
 
-func (b *RabbitMQBroker) PublishResult(replyTo string, correlationID string, body []byte) error {
-	b.connMu.RLock()
-	conn := b.conn
-	b.connMu.RUnlock()
+// func (b *RabbitMQBroker) PublishResult(msg RawMessage) error {
+// 	b.connMu.RLock()
+// 	conn := b.conn
+// 	b.connMu.RUnlock()
 
-	if conn == nil {
-		return fmt.Errorf("no active connection")
-	}
+// 	if conn == nil {
+// 		return fmt.Errorf("no active connection")
+// 	}
 
-	ch, err := conn.Channel()
-	if err != nil {
-		return fmt.Errorf("failed to open channel: %w", err)
-	}
-	defer ch.Close()
+// 	ch, err := conn.Channel()
+// 	if err != nil {
+// 		return fmt.Errorf("failed to open channel: %w", err)
+// 	}
+// 	defer ch.Close()
 
-	return ch.Publish(
-		"",      // default exchange
-		replyTo, // routing key == queue name
-		false,
-		false,
-		amqp.Publishing{
-			ContentType:   "application/json",
-			Headers:       amqp.Table{},
-			CorrelationId: correlationID,
-			Body:          body,
-		},
-	)
-}
+// 	return ch.Publish(
+// 		"",          // default exchange
+// 		msg.ReplyTo, // routing key == queue name
+// 		false,
+// 		false,
+// 		amqp.Publishing{
+// 			ContentType:   "application/json",
+// 			Headers:       amqp.Table{},
+// 			CorrelationId: msg.CorrelationID,
+// 			Body:          msg.Body,
+// 		},
+// 	)
+// }
 
 // closeTimeout bounds how long Close() will wait for background goroutines
 // (including the AMQP connection/channel close handshakes) to finish before
@@ -181,7 +162,7 @@ func (b *RabbitMQBroker) Close() {
 		case <-done:
 			// All goroutines exited on their own; safe to close taskChan since
 			// nothing can still be sending on it.
-			close(b.taskChan)
+			close(b.msgChan)
 			log.Println("[Broker] Broker closed successfully.")
 		case <-time.After(closeTimeout):
 			// Something (most likely the AMQP connection/channel close
@@ -312,14 +293,18 @@ func (b *RabbitMQBroker) consumeWorker(ctx context.Context, wg *sync.WaitGroup, 
 				}
 				log.Printf("[%s] Received a message: %s\n", queueName, msg.Body)
 
-				task, err := celeryv2.ParseCeleryDelivery(msg)
-				if err != nil {
-					log.Printf("[%s] Error parsing task: %v. Nacking...", queueName, err)
-					msg.Nack(false, false)
-					continue
+				rawMsg := &RawMessage{
+					Queue:         queueName,
+					Headers:       msg.Headers,
+					Body:          msg.Body,
+					ContentType:   msg.ContentType,
+					ReplyTo:       msg.ReplyTo,
+					CorrelationID: msg.CorrelationId,
+					Delivery:      &CeleryDelivery{delivery: msg},
 				}
+
 				select {
-				case b.taskChan <- task:
+				case b.msgChan <- rawMsg:
 				case <-ctx.Done():
 					msg.Nack(false, true)
 					ch.Close()

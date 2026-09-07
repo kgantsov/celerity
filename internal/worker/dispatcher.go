@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/kgantsov/celerity/internal/broker"
+	"github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
 )
 
@@ -16,10 +17,11 @@ type Dispatcher struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	Workers    []*Worker
+	proto      celery.Protocol
 }
 
 func NewDispatcher(
-	registry *registry.TaskRegistry, JobQueue chan Job, config WorkerConfig, broker broker.Broker,
+	registry *registry.TaskRegistry, JobQueue chan Job, config WorkerConfig, broker broker.Broker, proto celery.Protocol,
 ) *Dispatcher {
 	WorkerPool := make(chan chan Job, config.Count)
 	return &Dispatcher{
@@ -29,6 +31,7 @@ func NewDispatcher(
 		WorkerPool: WorkerPool,
 		JobQueue:   JobQueue,
 		Workers:    []*Worker{},
+		proto:      proto,
 	}
 }
 
@@ -42,7 +45,7 @@ func (d *Dispatcher) Run(ctx context.Context) {
 
 	// starting n number of workers
 	for i := 0; i < d.config.Count; i++ {
-		worker := NewWorker(d.registry, d.WorkerPool, d.config, d.broker)
+		worker := NewWorker(d.registry, d.WorkerPool, d.config, d.broker, d.proto)
 		worker.Start(d.ctx)
 		d.Workers = append(d.Workers, worker)
 	}

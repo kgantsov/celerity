@@ -6,16 +6,19 @@ import (
 	"testing"
 	"time"
 
+	celery "github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
-	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDispatcher_StopWithoutRun(t *testing.T) {
 	reg := registry.NewTaskRegistry()
 	jobQueue := make(chan Job, 1)
-	d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{})
+	proto, err := celery.NewProtocol("2.0")
+	require.NoError(t, err)
+	d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{}, proto)
 	assert.NotPanics(t, func() { d.Stop() })
 }
 
@@ -32,7 +35,9 @@ func TestDispatcher_RunStop(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := registry.NewTaskRegistry()
 			jobQueue := make(chan Job, 1)
-			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: tt.maxWorkers}, &MockBroker{})
+			proto, err := celery.NewProtocol("2.0")
+			require.NoError(t, err)
+			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: tt.maxWorkers}, &MockBroker{}, proto)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			d.Run(ctx)
@@ -59,8 +64,10 @@ func TestDispatcher_DispatchesJobsToWorkers(t *testing.T) {
 			reg := registry.NewTaskRegistry()
 			assert.NoError(t, reg.Register("noop", func() error { return nil }, []string{}))
 
+			proto, err := celery.NewProtocol("2.0")
+			require.NoError(t, err)
 			jobQueue := make(chan Job, tt.jobCount)
-			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: tt.workers}, &MockBroker{})
+			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: tt.workers}, &MockBroker{}, proto)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
@@ -75,8 +82,8 @@ func TestDispatcher_DispatchesJobsToWorkers(t *testing.T) {
 				deliveries[i] = del
 
 				wg.Add(1)
-				tk := &task.Task{Task: "noop", Args: []any{}, Kwargs: map[string]any{}, Delivery: del}
-				jobQueue <- NewJob(tk, &wg)
+				msg := newTestMsg(t, "noop", []any{}, map[string]any{}, del, "", "", 0)
+				jobQueue <- NewJob(msg, &wg)
 			}
 
 			done := make(chan struct{})

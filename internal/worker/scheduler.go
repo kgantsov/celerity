@@ -3,7 +3,7 @@ package worker
 import (
 	"sync"
 
-	"github.com/kgantsov/celerity/internal/task"
+	"github.com/kgantsov/celerity/internal/broker"
 )
 
 type Delivery interface {
@@ -12,7 +12,7 @@ type Delivery interface {
 }
 
 type Scheduler interface {
-	Schedule(task *task.Task) error
+	Schedule(msg *broker.RawMessage) error
 	Stop() error
 }
 
@@ -28,10 +28,10 @@ func NewTaskScheduler(JobQueue chan Job) *TaskScheduler {
 	return &TaskScheduler{JobQueue: JobQueue, wg: &wg}
 }
 
-func (s *TaskScheduler) Schedule(task *task.Task) error {
+func (s *TaskScheduler) Schedule(msg *broker.RawMessage) error {
 	s.wg.Add(1)
 
-	s.JobQueue <- Job{wg: s.wg, task: task}
+	s.JobQueue <- Job{wg: s.wg, msg: msg}
 	return nil
 }
 

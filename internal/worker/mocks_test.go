@@ -3,7 +3,7 @@ package worker
 import (
 	"context"
 
-	"github.com/kgantsov/celerity/internal/task"
+	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -39,19 +39,14 @@ func (m *MockBroker) Start() {
 	m.Called()
 }
 
-func (m *MockBroker) GetTask(ctx context.Context) (*task.Task, error) {
+func (m *MockBroker) GetMessage(ctx context.Context) (*broker.RawMessage, error) {
 	args := m.Called(ctx)
-	t, _ := args.Get(0).(*task.Task)
-	return t, args.Error(1)
+	msg, _ := args.Get(0).(*broker.RawMessage)
+	return msg, args.Error(1)
 }
 
-func (m *MockBroker) PublishTask(t *task.Task) error {
-	args := m.Called(t)
-	return args.Error(0)
-}
-
-func (m *MockBroker) PublishResult(replyTo string, correlationID string, body []byte) error {
-	args := m.Called(replyTo, correlationID, body)
+func (m *MockBroker) PublishMessage(msg *broker.RawMessage) error {
+	args := m.Called(msg)
 	return args.Error(0)
 }
 

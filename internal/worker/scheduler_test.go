@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	celery "github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
-	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTaskScheduler_ScheduleAndStop(t *testing.T) {
@@ -32,8 +33,10 @@ func TestTaskScheduler_ScheduleAndStop(t *testing.T) {
 				),
 			)
 
+			proto, err := celery.NewProtocol("2.0")
+			require.NoError(t, err)
 			jobQueue := make(chan Job, 10)
-			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{})
+			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{}, proto)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			d.Run(ctx)
@@ -44,8 +47,8 @@ func TestTaskScheduler_ScheduleAndStop(t *testing.T) {
 			delivery := &MockDelivery{}
 			delivery.On("Ack", false).Return(nil)
 
-			tk := &task.Task{Task: tt.taskName, Args: tt.args, Kwargs: tt.kwargs, Delivery: delivery}
-			assert.NoError(t, scheduler.Schedule(tk))
+			msg := newTestMsg(t, tt.taskName, tt.args, tt.kwargs, delivery, "", "", 0)
+			assert.NoError(t, scheduler.Schedule(msg))
 
 			assert.NoError(t, scheduler.Stop())
 

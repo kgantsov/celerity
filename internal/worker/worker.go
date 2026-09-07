@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/kgantsov/celerity/internal/broker"
-	"github.com/kgantsov/celerity/internal/protocol/celeryv2"
+	"github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
 	"github.com/kgantsov/celerity/internal/task"
 )
@@ -25,6 +25,7 @@ type Worker struct {
 	JobChannel chan Job
 	ctx        context.Context
 	cancel     context.CancelFunc
+	proto      celery.Protocol
 }
 
 func NewWorker(
@@ -32,6 +33,7 @@ func NewWorker(
 	workerPool chan chan Job,
 	config WorkerConfig,
 	broker broker.Broker,
+	proto celery.Protocol,
 ) *Worker {
 	return &Worker{
 		config:     config,
@@ -39,6 +41,7 @@ func NewWorker(
 		registry:   registry,
 		WorkerPool: workerPool,
 		JobChannel: make(chan Job),
+		proto:      proto,
 	}
 }
 
@@ -61,7 +64,15 @@ func (w *Worker) Start(ctx context.Context) {
 
 			select {
 			case job := <-w.JobChannel:
-				tk := job.GetTask()
+				msg := job.GetMessage()
+
+				tk, err := w.proto.ToTask(msg)
+				if err != nil {
+					log.Printf("Failed to parse message: %s", err.Error())
+					job.GetWaitGroup().Done()
+					continue
+				}
+
 				log.Printf("Processing a task: %+v", tk)
 
 				if !w.config.AcksLate {
@@ -76,7 +87,15 @@ func (w *Worker) Start(ctx context.Context) {
 						if tk.RetryCount < retryable.GetMaxRetries() {
 							log.Printf("Retrying task, attempt %d", tk.RetryCount+1)
 							tk.RetryCount++
-							if pubErr := w.broker.PublishTask(tk); pubErr != nil {
+
+							msg, err := w.proto.ToRawMessage(tk)
+							if err != nil {
+								log.Printf("Failed to serialize task for retry: %s", err.Error())
+								w.replyToResultQueue(tk, "FAILURE", result)
+								continue
+							}
+
+							if pubErr := w.broker.PublishMessage(msg); pubErr != nil {
 								log.Printf("Failed to republish task: %s", pubErr.Error())
 							}
 						} else {
@@ -110,14 +129,16 @@ func (w *Worker) Start(ctx context.Context) {
 
 func (w *Worker) replyToResultQueue(tk *task.Task, status string, result any) {
 	if tk.ReplyTo == "" {
+		log.Printf("No reply_to queue specified for task: %+v", tk)
 		return
 	}
-	resultBytes, err := celeryv2.BuildCeleryReplyPayload(tk.CorrelationId, status, result)
+	msg, err := w.proto.BuildReplyMessage(tk, status, result)
 	if err != nil {
-		log.Printf("Failed to serialize result: %s", err.Error())
+		log.Printf("Failed to build reply message: %s", err.Error())
 		return
 	}
-	w.broker.PublishResult(tk.ReplyTo, tk.CorrelationId, resultBytes)
+
+	w.broker.PublishMessage(msg)
 }
 
 // Stop signals the worker to stop listening for work requests. It is safe
