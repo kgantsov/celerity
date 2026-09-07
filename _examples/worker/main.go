@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os/signal"
 	"syscall"
@@ -30,10 +31,12 @@ func main() {
 	)
 
 	celerity.RegisterTask(
-		"hello.add", AddTask, "a", "b",
+		"hello.add", AddTask, []string{"a", "b"},
 	)
 	celerity.RegisterTask(
-		"hello.update_metadata", UpdateMetadataTask, "asset_id", "mode", "user_id", "metadata",
+		"hello.update_metadata",
+		UpdateMetadataTask,
+		[]string{"assetID", "mode", "user_id", "metadata"},
 	)
 
 	log.Println("Starting task processor loop...")
@@ -67,6 +70,8 @@ func UpdateMetadataTask(
 		metadata,
 	)
 	time.Sleep(5 * time.Second) // Simulate some processing time
-	// return fmt.Errorf("Simulated error for assetID: %s", assetID) // Uncomment to simulate an error
-	return nil
+	return &celerity.RetryError{
+		Err:        fmt.Errorf("simulated error for assetID: %s", assetID),
+		MaxRetries: 3,
+	}
 }

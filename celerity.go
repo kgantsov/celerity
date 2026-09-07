@@ -90,7 +90,7 @@ func (c *Celerity) Start(ctx context.Context) {
 	// Start the broker background routines
 	c.broker.Start()
 
-	c.dispatcher = worker.NewDispatcher(c.registry, JobQueue, c.config.Worker)
+	c.dispatcher = worker.NewDispatcher(c.registry, JobQueue, c.config.Worker, c.broker)
 	c.dispatcher.Run(ctx)
 
 	c.wg.Add(1)
@@ -150,6 +150,6 @@ func (c *Celerity) Stop(ctx context.Context) {
 	c.broker.Close()
 }
 
-func (c *Celerity) RegisterTask(name string, fn any, paramNames ...string) error {
-	return c.registry.Register(name, fn, paramNames...)
+func (c *Celerity) RegisterTask(name string, fn any, paramNames []string) error {
+	return c.registry.Register(name, fn, paramNames)
 }

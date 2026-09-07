@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -43,6 +44,8 @@ type RabbitMQBroker struct {
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 	closeOnce sync.Once
+	connMu    sync.RWMutex
+	conn      *amqp.Connection
 }
 
 // NewRabbitMQBroker initializes a new broker instance. parentCtx signals when
@@ -69,6 +72,61 @@ func (b *RabbitMQBroker) Start() {
 		defer b.wg.Done()
 		b.manageConnection()
 	}()
+}
+
+// GetTask blocks until a task is available on ANY of the configured queues,
+// or until the broker is closed.
+func (b *RabbitMQBroker) GetTask(ctx context.Context) (*task.Task, error) {
+	select {
+	case task, ok := <-b.taskChan:
+		if !ok {
+			return nil, fmt.Errorf("broker is closed")
+		}
+		return task, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-b.parentCtx.Done():
+		return nil, fmt.Errorf("broker stopped consuming")
+	case <-b.ctx.Done():
+		return nil, fmt.Errorf("broker is closed")
+	}
+}
+
+func (b *RabbitMQBroker) PublishTask(task *task.Task) error {
+	b.connMu.RLock()
+	conn := b.conn
+	b.connMu.RUnlock()
+
+	if conn == nil {
+		return fmt.Errorf("no active connection")
+	}
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("failed to open channel: %w", err)
+	}
+	defer ch.Close()
+
+	body, err := json.Marshal([]any{task.Args, task.Kwargs, map[string]any{}})
+	if err != nil {
+		return fmt.Errorf("failed to serialize task: %w", err)
+	}
+
+	return ch.Publish(
+		"",             // default exchange
+		task.QueueName, // routing key == queue name
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Headers: amqp.Table{
+				"id":      task.ID,
+				"task":    task.Task,
+				"retries": task.RetryCount,
+			},
+			Body: body,
+		},
+	)
 }
 
 // closeTimeout bounds how long Close() will wait for background goroutines
@@ -107,24 +165,6 @@ func (b *RabbitMQBroker) Close() {
 	})
 }
 
-// GetTask blocks until a task is available on ANY of the configured queues,
-// or until the broker is closed.
-func (b *RabbitMQBroker) GetTask(ctx context.Context) (*task.Task, error) {
-	select {
-	case task, ok := <-b.taskChan:
-		if !ok {
-			return nil, fmt.Errorf("broker is closed")
-		}
-		return task, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-b.parentCtx.Done():
-		return nil, fmt.Errorf("broker stopped consuming")
-	case <-b.ctx.Done():
-		return nil, fmt.Errorf("broker is closed")
-	}
-}
-
 func (b *RabbitMQBroker) manageConnection() {
 	for {
 		log.Println("[Broker] Attempting to connect to RabbitMQ...")
@@ -139,6 +179,9 @@ func (b *RabbitMQBroker) manageConnection() {
 			}
 		}
 		log.Println("[Broker] Connected!")
+		b.connMu.Lock()
+		b.conn = conn
+		b.connMu.Unlock()
 
 		connCtx, cancelConn := context.WithCancel(b.ctx)
 		var workerWg sync.WaitGroup
@@ -153,6 +196,9 @@ func (b *RabbitMQBroker) manageConnection() {
 			// Explicit Close() — tear down everything.
 			cancelConn()
 			workerWg.Wait()
+			b.connMu.Lock()
+			b.conn = nil
+			b.connMu.Unlock()
 			conn.CloseDeadline(time.Now().Add(2 * time.Second))
 			return
 		case <-b.parentCtx.Done():
@@ -162,12 +208,18 @@ func (b *RabbitMQBroker) manageConnection() {
 			// still ack their deliveries.
 			workerWg.Wait()
 			<-b.ctx.Done()
+			b.connMu.Lock()
+			b.conn = nil
+			b.connMu.Unlock()
 			conn.CloseDeadline(time.Now().Add(2 * time.Second))
 			return
 		case err := <-conn.NotifyClose(make(chan *amqp.Error, 1)):
 			log.Printf("[Broker] Connection lost: %v. Reconnecting...", err)
 			cancelConn()
 			workerWg.Wait()
+			b.connMu.Lock()
+			b.conn = nil
+			b.connMu.Unlock()
 		}
 	}
 }

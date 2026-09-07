@@ -18,10 +18,10 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, tk *task.Task, config WorkerConfig) {
+func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, tk *task.Task, config WorkerConfig, b *MockBroker) {
 	t.Helper()
 	pool := make(chan chan Job, 1)
-	w := NewWorker(reg, pool, config)
+	w := NewWorker(reg, pool, config, b)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	w.Start(ctx)
@@ -49,13 +49,17 @@ func TestWorker_successAcks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := registry.NewTaskRegistry()
-			assert.NoError(t, reg.Register("add", func(a, b int) (int, error) { return a + b, nil }, "a", "b"))
+			assert.NoError(
+				t, reg.Register(
+					"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
+				),
+			)
 
 			delivery := &MockDelivery{}
 			delivery.On("Ack", false).Return(nil)
 
 			tk := &task.Task{Task: "add", Args: tt.args, Kwargs: tt.kwargs, Delivery: delivery}
-			runWorkerJob(t, reg, tk, WorkerConfig{Count: 1})
+			runWorkerJob(t, reg, tk, WorkerConfig{Count: 1}, &MockBroker{})
 
 			delivery.AssertCalled(t, "Ack", false)
 			delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -93,13 +97,17 @@ func TestWorker_registryErrorAcks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := registry.NewTaskRegistry()
-			assert.NoError(t, reg.Register("add", func(a, b int) (int, error) { return a + b, nil }, "a", "b"))
+			assert.NoError(
+				t, reg.Register(
+					"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
+				),
+			)
 
 			delivery := &MockDelivery{}
 			delivery.On("Ack", false).Return(nil)
 
 			tk := &task.Task{Task: tt.taskName, Args: tt.args, Kwargs: tt.kwargs, Delivery: delivery}
-			runWorkerJob(t, reg, tk, WorkerConfig{Count: 1})
+			runWorkerJob(t, reg, tk, WorkerConfig{Count: 1}, &MockBroker{})
 
 			delivery.AssertCalled(t, "Ack", false)
 			delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -107,31 +115,40 @@ func TestWorker_registryErrorAcks(t *testing.T) {
 	}
 }
 
-// AcksLate=true: transient errors nack after execution so the task is requeued.
-func TestWorker_businessErrorNacks(t *testing.T) {
+// AcksLate=true: transient errors republish for retry then ack the original delivery.
+func TestWorker_businessErrorRetries(t *testing.T) {
 	reg := registry.NewTaskRegistry()
-	assert.NoError(t, reg.Register("fail", func() error { return errors.New("transient") }))
+	retryErr := &testRetryError{err: errors.New("transient"), maxRetries: 3}
+	assert.NoError(
+		t, reg.Register("fail", func() error { return retryErr }, []string{}),
+	)
 
 	delivery := &MockDelivery{}
-	delivery.On("Nack", false).Return(nil)
+	delivery.On("Ack", false).Return(nil)
+
+	b := &MockBroker{}
+	b.On("PublishTask", mock.Anything).Return(nil)
 
 	tk := &task.Task{Task: "fail", Args: []any{}, Kwargs: map[string]any{}, Delivery: delivery}
-	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: true})
+	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: true}, b)
 
-	delivery.AssertCalled(t, "Nack", false)
-	delivery.AssertNotCalled(t, "Ack", mock.Anything)
+	b.AssertCalled(t, "PublishTask", mock.Anything)
+	delivery.AssertCalled(t, "Ack", false)
+	delivery.AssertNotCalled(t, "Nack", mock.Anything)
 }
 
 // AcksLate=false: delivery is acked before execution regardless of outcome.
 func TestWorker_acksLateFalse_businessErrorAcks(t *testing.T) {
 	reg := registry.NewTaskRegistry()
-	assert.NoError(t, reg.Register("fail", func() error { return errors.New("transient") }))
+	assert.NoError(
+		t, reg.Register("fail", func() error { return errors.New("transient") }, []string{}),
+	)
 
 	delivery := &MockDelivery{}
 	delivery.On("Ack", false).Return(nil)
 
 	tk := &task.Task{Task: "fail", Args: []any{}, Kwargs: map[string]any{}, Delivery: delivery}
-	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: false})
+	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: false}, &MockBroker{})
 
 	delivery.AssertCalled(t, "Ack", false)
 	delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -139,6 +156,6 @@ func TestWorker_acksLateFalse_businessErrorAcks(t *testing.T) {
 
 func TestWorker_stopWithoutStart(t *testing.T) {
 	pool := make(chan chan Job, 1)
-	w := NewWorker(registry.NewTaskRegistry(), pool, WorkerConfig{Count: 1})
+	w := NewWorker(registry.NewTaskRegistry(), pool, WorkerConfig{Count: 1}, &MockBroker{})
 	assert.NotPanics(t, func() { w.Stop() })
 }

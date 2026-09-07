@@ -1,4 +1,4 @@
-package celerity
+package broker
 
 import (
 	"context"
@@ -19,6 +19,11 @@ func (m *MockBroker) GetTask(ctx context.Context) (*task.Task, error) {
 	args := m.Called(ctx)
 	t, _ := args.Get(0).(*task.Task)
 	return t, args.Error(1)
+}
+
+func (m *MockBroker) PublishTask(t *task.Task) error {
+	args := m.Called(t)
+	return args.Error(0)
 }
 
 func (m *MockBroker) Close() {

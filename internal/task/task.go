@@ -5,10 +5,19 @@ type Delivery interface {
 	Nack(multiple bool) error
 }
 
+// Retryable is implemented by errors that want to be retried. The worker
+// checks for this interface; plain errors are not retried.
+type Retryable interface {
+	error
+	GetMaxRetries() int8
+}
+
 type Task struct {
-	ID       string
-	Task     string
-	Args     []any
-	Kwargs   map[string]any
-	Delivery Delivery
+	QueueName  string
+	ID         string
+	Task       string
+	Args       []any
+	Kwargs     map[string]any
+	Delivery   Delivery
+	RetryCount int8
 }

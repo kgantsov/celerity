@@ -26,7 +26,7 @@ func NewTaskRegistry() *TaskRegistry {
 }
 
 // Register registers a function along with its expected parameter names (in order)
-func (r *TaskRegistry) Register(name string, fn any, paramNames ...string) error {
+func (r *TaskRegistry) Register(name string, fn any, paramNames []string) error {
 	v := reflect.ValueOf(fn)
 	if v.Kind() != reflect.Func {
 		return fmt.Errorf("task %q is not a function", name)
@@ -99,8 +99,15 @@ func (r *TaskRegistry) Execute(
 	// Check if the last return value is a non-nil error
 	if len(results) > 0 {
 		last := results[len(results)-1]
-		if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) && !last.IsNil() {
-			return out, last.Interface().(error)
+		if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+			switch last.Kind() {
+			case reflect.Ptr, reflect.Interface, reflect.Func, reflect.Chan, reflect.Map, reflect.Slice:
+				if !last.IsNil() {
+					return out, last.Interface().(error)
+				}
+			default:
+				return out, last.Interface().(error)
+			}
 		}
 	}
 

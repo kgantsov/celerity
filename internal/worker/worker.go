@@ -2,9 +2,12 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log"
 
+	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/kgantsov/celerity/internal/registry"
+	"github.com/kgantsov/celerity/internal/task"
 )
 
 type WorkerConfig struct {
@@ -15,6 +18,7 @@ type WorkerConfig struct {
 // Worker represents the worker that executes the job
 type Worker struct {
 	config     WorkerConfig
+	broker     broker.Broker
 	registry   *registry.TaskRegistry
 	WorkerPool chan chan Job
 	JobChannel chan Job
@@ -22,9 +26,15 @@ type Worker struct {
 	cancel     context.CancelFunc
 }
 
-func NewWorker(registry *registry.TaskRegistry, workerPool chan chan Job, config WorkerConfig) *Worker {
+func NewWorker(
+	registry *registry.TaskRegistry,
+	workerPool chan chan Job,
+	config WorkerConfig,
+	broker broker.Broker,
+) *Worker {
 	return &Worker{
 		config:     config,
+		broker:     broker,
 		registry:   registry,
 		WorkerPool: workerPool,
 		JobChannel: make(chan Job),
@@ -50,30 +60,31 @@ func (w *Worker) Start(ctx context.Context) {
 
 			select {
 			case job := <-w.JobChannel:
-				task := job.GetTask()
-				log.Printf("Processing a task: %+v", task)
+				tk := job.GetTask()
+				log.Printf("Processing a task: %+v", tk)
 
 				if !w.config.AcksLate {
-					task.Delivery.Ack(false)
+					tk.Delivery.Ack(false)
 				}
 
-				result, err := w.registry.Execute(task.Task, task.Args, task.Kwargs)
+				result, err := w.registry.Execute(tk.Task, tk.Args, tk.Kwargs)
 
 				if err != nil {
 					log.Printf("Error executing task: %s", err.Error())
-					if w.config.AcksLate {
-						switch err {
-						case registry.ErrTaskNotFound, registry.ErrTooManyArguments, registry.ErrInvalidArgumentType, registry.ErrMissingArgument:
-							task.Delivery.Ack(false)
-						default:
-							log.Printf("Republishing failed task: %s", err.Error())
-							task.Delivery.Nack(false)
+					if retryable, ok := errors.AsType[task.Retryable](err); ok && tk.RetryCount < retryable.GetMaxRetries() {
+						log.Printf("Retrying task, attempt %d", tk.RetryCount+1)
+						tk.RetryCount++
+						if pubErr := w.broker.PublishTask(tk); pubErr != nil {
+							log.Printf("Failed to republish task: %s", pubErr.Error())
 						}
+					}
+					if w.config.AcksLate {
+						tk.Delivery.Ack(false)
 					}
 				} else {
 					log.Printf("Task result: %v\n", result)
 					if w.config.AcksLate {
-						task.Delivery.Ack(false)
+						tk.Delivery.Ack(false)
 					}
 				}
 

@@ -25,11 +25,15 @@ func TestTaskScheduler_ScheduleAndStop(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := registry.NewTaskRegistry()
-			assert.NoError(t, reg.Register("noop", func() error { return nil }))
-			assert.NoError(t, reg.Register("add", func(a, b int) (int, error) { return a + b, nil }, "a", "b"))
+			assert.NoError(t, reg.Register("noop", func() error { return nil }, []string{}))
+			assert.NoError(
+				t, reg.Register(
+					"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
+				),
+			)
 
 			jobQueue := make(chan Job, 10)
-			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2})
+			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{})
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			d.Run(ctx)

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -99,7 +100,7 @@ func TestRegisterTask(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := NewCelerity("amqp://localhost", []string{"q"})
-			err := c.RegisterTask(tt.taskName, tt.fn, tt.paramNames...)
+			err := c.RegisterTask(tt.taskName, tt.fn, tt.paramNames)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -135,7 +136,7 @@ func TestCelerity_StartStop(t *testing.T) {
 		}
 	})
 
-	b := &MockBroker{}
+	b := &broker.MockBroker{}
 	b.On("Start").Return()
 	b.On("Close").Return()
 	b.On("GetTask", mock.Anything).Once().Return(&task.Task{
@@ -148,7 +149,12 @@ func TestCelerity_StartStop(t *testing.T) {
 
 	c := NewCelerity("amqp://localhost", []string{"q"}, WithWorkers(2))
 	c.broker = b
-	require.NoError(t, c.RegisterTask("add", func(a, b int) (int, error) { return a + b, nil }, "a", "b"))
+	require.NoError(
+		t,
+		c.RegisterTask(
+			"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
+		),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	c.Start(ctx)
@@ -169,7 +175,7 @@ func TestCelerity_StartStop(t *testing.T) {
 }
 
 func TestCelerity_BrokerError(t *testing.T) {
-	broker := &MockBroker{}
+	broker := &broker.MockBroker{}
 	broker.On("Start").Return()
 	broker.On("Close").Return()
 	broker.On("GetTask", mock.Anything).Return(nil, errors.New("connection lost"))

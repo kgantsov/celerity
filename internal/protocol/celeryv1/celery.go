@@ -3,6 +3,7 @@ package celeryv1
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/kgantsov/celerity/internal/task"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -49,7 +50,8 @@ func (p *CeleryV1Payload) UnmarshalJSON(data []byte) error {
 // ParseCeleryDelivery parses an AMQP delivery into a Task struct
 func ParseCeleryDelivery(d amqp.Delivery) (*task.Task, error) {
 	task := &task.Task{
-		Delivery: &CeleryDelivery{delivery: d},
+		QueueName: d.RoutingKey,
+		Delivery:  &CeleryDelivery{delivery: d},
 	}
 
 	if id, ok := d.Headers["id"].(string); ok {
@@ -57,6 +59,13 @@ func ParseCeleryDelivery(d amqp.Delivery) (*task.Task, error) {
 	}
 	if taskName, ok := d.Headers["task"].(string); ok {
 		task.Task = taskName
+	}
+
+	log.Printf("HEADERS: %v\n", d.Headers)
+
+	// read retry count and max retries from headers if present
+	if retryCount, ok := d.Headers["retries"].(int8); ok {
+		task.RetryCount = int8(retryCount)
 	}
 
 	var payload CeleryV1Payload

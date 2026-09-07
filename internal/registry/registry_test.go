@@ -47,7 +47,7 @@ func TestRegister(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := NewTaskRegistry()
-			err := r.Register(tt.taskName, tt.fn, tt.paramNames...)
+			err := r.Register(tt.taskName, tt.fn, tt.paramNames)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -119,7 +119,7 @@ func TestExecute_positionalArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := NewTaskRegistry()
 			if tt.fn != nil {
-				require.NoError(t, r.Register(tt.taskName, tt.fn, tt.paramNames...))
+				require.NoError(t, r.Register(tt.taskName, tt.fn, tt.paramNames))
 			}
 
 			result, err := r.Execute(tt.taskName, tt.args, tt.kwargs)
@@ -172,7 +172,7 @@ func TestExecute_kwargs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := NewTaskRegistry()
-			require.NoError(t, r.Register("task", tt.fn, tt.paramNames...))
+			require.NoError(t, r.Register("task", tt.fn, tt.paramNames))
 
 			result, err := r.Execute("task", tt.args, tt.kwargs)
 			if tt.wantErr != nil {
@@ -188,7 +188,7 @@ func TestExecute_kwargs(t *testing.T) {
 func TestExecute_taskReturnsError(t *testing.T) {
 	sentinel := errors.New("task failed")
 	r := NewTaskRegistry()
-	require.NoError(t, r.Register("fail", func() error { return sentinel }, ))
+	require.NoError(t, r.Register("fail", func() error { return sentinel }, []string{}))
 
 	result, err := r.Execute("fail", []any{}, map[string]any{})
 	assert.ErrorIs(t, err, sentinel)
