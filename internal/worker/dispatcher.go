@@ -21,7 +21,11 @@ type Dispatcher struct {
 }
 
 func NewDispatcher(
-	registry *registry.TaskRegistry, JobQueue chan Job, config WorkerConfig, broker broker.Broker, proto celery.Protocol,
+	registry *registry.TaskRegistry,
+	JobQueue chan Job,
+	config WorkerConfig,
+	broker broker.Broker,
+	proto celery.Protocol,
 ) *Dispatcher {
 	WorkerPool := make(chan chan Job, config.Count)
 	return &Dispatcher{

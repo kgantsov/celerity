@@ -141,7 +141,9 @@ func (b *RabbitMQBroker) Close() {
 			// whole process forever. We deliberately do NOT close taskChan
 			// here: a goroutine may still be alive and could send on it,
 			// which would panic if the channel were closed.
-			log.Println("[Broker] Timed out waiting for broker goroutines to stop; forcing shutdown.")
+			log.Println(
+				"[Broker] Timed out waiting for broker goroutines to stop; forcing shutdown.",
+			)
 		}
 	})
 }
@@ -205,7 +207,9 @@ func (b *RabbitMQBroker) manageConnection() {
 	}
 }
 
-func (b *RabbitMQBroker) consumeWorker(ctx context.Context, wg *sync.WaitGroup, conn *amqp.Connection, queueName string) {
+func (b *RabbitMQBroker) consumeWorker(
+	ctx context.Context, wg *sync.WaitGroup, conn *amqp.Connection, queueName string,
+) {
 	defer wg.Done()
 
 	for {

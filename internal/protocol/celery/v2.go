@@ -102,7 +102,9 @@ func (p *CeleryPtotocolV2) ToRawMessage(tk *task.Task) (*broker.RawMessage, erro
 	}, nil
 }
 
-func (p *CeleryPtotocolV2) BuildReplyMessage(tk *task.Task, status string, result any) (*broker.RawMessage, error) {
+func (p *CeleryPtotocolV2) BuildReplyMessage(
+	tk *task.Task, status string, result any,
+) (*broker.RawMessage, error) {
 	if s, ok := result.([]any); ok && len(s) == 1 {
 		result = s[0]
 	}
