@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/kgantsov/celerity/internal/broker"
-	"github.com/kgantsov/celerity/internal/protocol/celeryv1"
+	"github.com/kgantsov/celerity/internal/protocol/celeryv2"
 	"github.com/kgantsov/celerity/internal/registry"
 	"github.com/kgantsov/celerity/internal/task"
 )
@@ -112,7 +112,7 @@ func (w *Worker) replyToResultQueue(tk *task.Task, status string, result any) {
 	if tk.ReplyTo == "" {
 		return
 	}
-	resultBytes, err := celeryv1.BuildCeleryReplyPayload(tk.CorrelationId, status, result)
+	resultBytes, err := celeryv2.BuildCeleryReplyPayload(tk.CorrelationId, status, result)
 	if err != nil {
 		log.Printf("Failed to serialize result: %s", err.Error())
 		return

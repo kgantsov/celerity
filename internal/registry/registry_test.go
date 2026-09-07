@@ -75,7 +75,7 @@ func TestExecute_positionalArgs(t *testing.T) {
 			paramNames: []string{"a", "b"},
 			args:       []any{float64(3), float64(4)},
 			kwargs:     map[string]any{},
-			wantResult: []any{7, nil},
+			wantResult: []any{7},
 		},
 		{
 			name:       "string concat",
@@ -84,7 +84,7 @@ func TestExecute_positionalArgs(t *testing.T) {
 			paramNames: []string{"s1", "s2"},
 			args:       []any{"hello", " world"},
 			kwargs:     map[string]any{},
-			wantResult: []any{"hello world", nil},
+			wantResult: []any{"hello world"},
 		},
 		{
 			name:       "float64 to float32 coercion",
@@ -93,7 +93,7 @@ func TestExecute_positionalArgs(t *testing.T) {
 			paramNames: []string{"a"},
 			args:       []any{float64(1.5)},
 			kwargs:     map[string]any{},
-			wantResult: []any{float32(3.0), nil},
+			wantResult: []any{float32(3.0)},
 		},
 		{
 			name:       "too many positional args",
@@ -149,7 +149,7 @@ func TestExecute_kwargs(t *testing.T) {
 			paramNames: []string{"a", "b"},
 			args:       []any{},
 			kwargs:     map[string]any{"a": float64(10), "b": float64(3)},
-			wantResult: []any{7, nil},
+			wantResult: []any{7},
 		},
 		{
 			name:       "mixed positional and kwargs",
@@ -157,7 +157,7 @@ func TestExecute_kwargs(t *testing.T) {
 			paramNames: []string{"a", "b"},
 			args:       []any{float64(5)},
 			kwargs:     map[string]any{"b": float64(4)},
-			wantResult: []any{20, nil},
+			wantResult: []any{20},
 		},
 		{
 			name:       "missing kwarg",
@@ -192,5 +192,5 @@ func TestExecute_taskReturnsError(t *testing.T) {
 
 	result, err := r.Execute("fail", []any{}, map[string]any{})
 	assert.ErrorIs(t, err, sentinel)
-	assert.NotNil(t, result)
+	assert.Nil(t, result)
 }

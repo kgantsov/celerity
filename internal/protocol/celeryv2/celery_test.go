@@ -1,12 +1,12 @@
-package celeryv1
+package celeryv2
 
 import (
 	"encoding/json"
 	"testing"
 
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func TestBuildCeleryReplyPayload(t *testing.T) {
@@ -70,7 +70,7 @@ func TestBuildCeleryReplyPayload(t *testing.T) {
 	}
 }
 
-func TestCeleryV1Payload_UnmarshalJSON(t *testing.T) {
+func TestCeleryV2Payload_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
@@ -105,7 +105,7 @@ func TestCeleryV1Payload_UnmarshalJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var p CeleryV1Payload
+			var p CeleryV2Payload
 			err := json.Unmarshal([]byte(tt.input), &p)
 			if tt.wantErr {
 				assert.Error(t, err)

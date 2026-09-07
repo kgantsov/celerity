@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kgantsov/celerity/internal/protocol/celeryv1"
+	"github.com/kgantsov/celerity/internal/protocol/celeryv2"
 	"github.com/kgantsov/celerity/internal/task"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -312,7 +312,7 @@ func (b *RabbitMQBroker) consumeWorker(ctx context.Context, wg *sync.WaitGroup, 
 				}
 				log.Printf("[%s] Received a message: %s\n", queueName, msg.Body)
 
-				task, err := celeryv1.ParseCeleryDelivery(msg)
+				task, err := celeryv2.ParseCeleryDelivery(msg)
 				if err != nil {
 					log.Printf("[%s] Error parsing task: %v. Nacking...", queueName, err)
 					msg.Nack(false, false)

@@ -125,7 +125,7 @@ The task is republished to the same queue and retried up to `MaxRetries` times. 
 celerity.go              # Public API: NewCelerity, Start, Stop, RegisterTask
 internal/
   broker/                # RabbitMQ AMQP consumer with auto-reconnect
-  protocol/celeryv1/     # Celery v1 message parser
+  protocol/celeryv2/     # Celery v1 message parser
   registry/              # Task name → handler function mapping (reflection-based)
   worker/                # Dispatcher + worker pool
   task/                  # Task struct

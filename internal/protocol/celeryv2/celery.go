@@ -1,4 +1,4 @@
-package celeryv1
+package celeryv2
 
 import (
 	"encoding/json"
@@ -21,14 +21,14 @@ func (d *CeleryDelivery) Nack(multiple bool) error {
 	return d.delivery.Nack(multiple, true)
 }
 
-// CeleryV1Payload represents the body array: [args, kwargs, embed]
-type CeleryV1Payload struct {
+// CeleryV2Payload represents the body array: [args, kwargs, embed]
+type CeleryV2Payload struct {
 	Args   []any          `json:"0"`
 	Kwargs map[string]any `json:"1"`
 }
 
 // UnmarshalJSON handles decoding the top-level JSON array format
-func (p *CeleryV1Payload) UnmarshalJSON(data []byte) error {
+func (p *CeleryV2Payload) UnmarshalJSON(data []byte) error {
 	var raw []json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -70,7 +70,7 @@ func ParseCeleryDelivery(d amqp.Delivery) (*task.Task, error) {
 		task.RetryCount = int8(retryCount)
 	}
 
-	var payload CeleryV1Payload
+	var payload CeleryV2Payload
 	if err := json.Unmarshal(d.Body, &payload); err != nil {
 		return nil, fmt.Errorf("failed to decode v1 payload: %w", err)
 	}
