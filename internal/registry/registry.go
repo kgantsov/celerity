@@ -91,27 +91,20 @@ func (r *TaskRegistry) Execute(
 
 	results := task.fn.Call(inArgs)
 
-	out := make([]any, len(results))
-	for i, res := range results {
-		out[i] = res.Interface()
-	}
-
-	// Check if the last return value is a non-nil error
-	if len(results) > 0 {
-		last := results[len(results)-1]
-		if last.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-			switch last.Kind() {
-			case reflect.Ptr, reflect.Interface, reflect.Func, reflect.Chan, reflect.Map, reflect.Slice:
-				if !last.IsNil() {
-					return out, last.Interface().(error)
-				}
-			default:
-				return out, last.Interface().(error)
+	errorType := reflect.TypeOf((*error)(nil)).Elem()
+	var out []any
+	var taskErr error
+	for _, res := range results {
+		if res.Type().Implements(errorType) {
+			if !res.IsNil() {
+				taskErr = res.Interface().(error)
 			}
+		} else {
+			out = append(out, res.Interface())
 		}
 	}
 
-	return out, nil
+	return out, taskErr
 }
 
 // convertValue converts dynamic JSON values (float64, maps, slices) to target reflect.Types

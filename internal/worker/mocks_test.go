@@ -28,7 +28,7 @@ type testRetryError struct {
 	maxRetries int8
 }
 
-func (e *testRetryError) Error() string      { return e.err.Error() }
+func (e *testRetryError) Error() string       { return e.err.Error() }
 func (e *testRetryError) GetMaxRetries() int8 { return e.maxRetries }
 
 type MockBroker struct {
@@ -50,7 +50,11 @@ func (m *MockBroker) PublishTask(t *task.Task) error {
 	return args.Error(0)
 }
 
+func (m *MockBroker) PublishResult(replyTo string, correlationID string, body []byte) error {
+	args := m.Called(replyTo, correlationID, body)
+	return args.Error(0)
+}
+
 func (m *MockBroker) Close() {
 	m.Called()
 }
-

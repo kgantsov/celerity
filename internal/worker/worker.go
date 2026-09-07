@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/kgantsov/celerity/internal/broker"
+	"github.com/kgantsov/celerity/internal/protocol/celeryv1"
 	"github.com/kgantsov/celerity/internal/registry"
 	"github.com/kgantsov/celerity/internal/task"
 )
@@ -71,11 +72,16 @@ func (w *Worker) Start(ctx context.Context) {
 
 				if err != nil {
 					log.Printf("Error executing task: %s", err.Error())
-					if retryable, ok := errors.AsType[task.Retryable](err); ok && tk.RetryCount < retryable.GetMaxRetries() {
-						log.Printf("Retrying task, attempt %d", tk.RetryCount+1)
-						tk.RetryCount++
-						if pubErr := w.broker.PublishTask(tk); pubErr != nil {
-							log.Printf("Failed to republish task: %s", pubErr.Error())
+					if retryable, ok := errors.AsType[task.Retryable](err); ok {
+						if tk.RetryCount < retryable.GetMaxRetries() {
+							log.Printf("Retrying task, attempt %d", tk.RetryCount+1)
+							tk.RetryCount++
+							if pubErr := w.broker.PublishTask(tk); pubErr != nil {
+								log.Printf("Failed to republish task: %s", pubErr.Error())
+							}
+						} else {
+							log.Printf("Max retries reached for task: %+v", tk)
+							w.replyToResultQueue(tk, "FAILURE", result)
 						}
 					}
 					if w.config.AcksLate {
@@ -83,6 +89,9 @@ func (w *Worker) Start(ctx context.Context) {
 					}
 				} else {
 					log.Printf("Task result: %v\n", result)
+
+					w.replyToResultQueue(tk, "SUCCESS", result)
+
 					if w.config.AcksLate {
 						tk.Delivery.Ack(false)
 					}
@@ -97,6 +106,18 @@ func (w *Worker) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+func (w *Worker) replyToResultQueue(tk *task.Task, status string, result any) {
+	if tk.ReplyTo == "" {
+		return
+	}
+	resultBytes, err := celeryv1.BuildCeleryReplyPayload(tk.CorrelationId, status, result)
+	if err != nil {
+		log.Printf("Failed to serialize result: %s", err.Error())
+		return
+	}
+	w.broker.PublishResult(tk.ReplyTo, tk.CorrelationId, resultBytes)
 }
 
 // Stop signals the worker to stop listening for work requests. It is safe

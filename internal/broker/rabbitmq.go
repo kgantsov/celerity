@@ -129,6 +129,35 @@ func (b *RabbitMQBroker) PublishTask(task *task.Task) error {
 	)
 }
 
+func (b *RabbitMQBroker) PublishResult(replyTo string, correlationID string, body []byte) error {
+	b.connMu.RLock()
+	conn := b.conn
+	b.connMu.RUnlock()
+
+	if conn == nil {
+		return fmt.Errorf("no active connection")
+	}
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("failed to open channel: %w", err)
+	}
+	defer ch.Close()
+
+	return ch.Publish(
+		"",      // default exchange
+		replyTo, // routing key == queue name
+		false,
+		false,
+		amqp.Publishing{
+			ContentType:   "application/json",
+			Headers:       amqp.Table{},
+			CorrelationId: correlationID,
+			Body:          body,
+		},
+	)
+}
+
 // closeTimeout bounds how long Close() will wait for background goroutines
 // (including the AMQP connection/channel close handshakes) to finish before
 // giving up, so a stuck broker connection can never hang the whole process.

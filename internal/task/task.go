@@ -13,11 +13,13 @@ type Retryable interface {
 }
 
 type Task struct {
-	QueueName  string
-	ID         string
-	Task       string
-	Args       []any
-	Kwargs     map[string]any
-	Delivery   Delivery
-	RetryCount int8
+	QueueName     string
+	ReplyTo       string
+	CorrelationId string
+	ID            string
+	Task          string
+	Args          []any
+	Kwargs        map[string]any
+	Delivery      Delivery
+	RetryCount    int8
 }

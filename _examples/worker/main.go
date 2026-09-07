@@ -34,6 +34,9 @@ func main() {
 		"hello.add", AddTask, []string{"a", "b"},
 	)
 	celerity.RegisterTask(
+		"hello.append", AppendTask, []string{"a", "b"},
+	)
+	celerity.RegisterTask(
 		"hello.update_metadata",
 		UpdateMetadataTask,
 		[]string{"assetID", "mode", "user_id", "metadata"},
@@ -57,6 +60,10 @@ func main() {
 
 func AddTask(a, b int) (int, error) {
 	return a + b, nil
+}
+
+func AppendTask(a []string, b string) ([]string, error) {
+	return append(a, b), nil
 }
 
 func UpdateMetadataTask(

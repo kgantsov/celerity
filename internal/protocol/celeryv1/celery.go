@@ -50,8 +50,10 @@ func (p *CeleryV1Payload) UnmarshalJSON(data []byte) error {
 // ParseCeleryDelivery parses an AMQP delivery into a Task struct
 func ParseCeleryDelivery(d amqp.Delivery) (*task.Task, error) {
 	task := &task.Task{
-		QueueName: d.RoutingKey,
-		Delivery:  &CeleryDelivery{delivery: d},
+		QueueName:     d.RoutingKey,
+		Delivery:      &CeleryDelivery{delivery: d},
+		ReplyTo:       d.ReplyTo,
+		CorrelationId: d.CorrelationId,
 	}
 
 	if id, ok := d.Headers["id"].(string); ok {
@@ -77,4 +79,32 @@ func ParseCeleryDelivery(d amqp.Delivery) (*task.Task, error) {
 	task.Kwargs = payload.Kwargs
 
 	return task, nil
+}
+
+type Reply struct {
+	TaskID    string        `json:"task_id"`
+	Status    string        `json:"status"`
+	Result    any           `json:"result"`
+	Traceback interface{}   `json:"traceback"`
+	Children  []interface{} `json:"children"`
+}
+
+func BuildCeleryReplyPayload(taskID string, status string, result any) ([]byte, error) {
+	if s, ok := result.([]any); ok && len(s) == 1 {
+		result = s[0]
+	}
+	reply := Reply{
+		TaskID:    taskID,
+		Status:    status,
+		Result:    result,
+		Traceback: nil,
+		Children:  []interface{}{},
+	}
+	resultBytes, err := json.Marshal(reply)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return resultBytes, nil
 }

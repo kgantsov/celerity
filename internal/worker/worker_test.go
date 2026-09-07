@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -158,4 +160,124 @@ func TestWorker_stopWithoutStart(t *testing.T) {
 	pool := make(chan chan Job, 1)
 	w := NewWorker(registry.NewTaskRegistry(), pool, WorkerConfig{Count: 1}, &MockBroker{})
 	assert.NotPanics(t, func() { w.Stop() })
+}
+
+func TestWorker_publishesSuccessResult(t *testing.T) {
+	reg := registry.NewTaskRegistry()
+	require.NoError(t, reg.Register(
+		"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
+	))
+
+	delivery := &MockDelivery{}
+	delivery.On("Ack", false).Return(nil)
+
+	var capturedBody []byte
+	b := &MockBroker{}
+	b.On("PublishResult", "reply-queue", "corr-id-123", mock.Anything).
+		Run(func(args mock.Arguments) { capturedBody = args[2].([]byte) }).
+		Return(nil)
+
+	tk := &task.Task{
+		Task:          "add",
+		Args:          []any{float64(3), float64(4)},
+		Kwargs:        map[string]any{},
+		Delivery:      delivery,
+		ReplyTo:       "reply-queue",
+		CorrelationId: "corr-id-123",
+	}
+	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1}, b)
+
+	b.AssertCalled(t, "PublishResult", "reply-queue", "corr-id-123", mock.Anything)
+
+	var reply map[string]any
+	require.NoError(t, json.Unmarshal(capturedBody, &reply))
+	assert.Equal(t, "corr-id-123", reply["task_id"])
+	assert.Equal(t, "SUCCESS", reply["status"])
+	assert.Equal(t, float64(7), reply["result"])
+}
+
+func TestWorker_doesNotPublishResultWithoutReplyTo(t *testing.T) {
+	reg := registry.NewTaskRegistry()
+	require.NoError(t, reg.Register(
+		"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
+	))
+
+	delivery := &MockDelivery{}
+	delivery.On("Ack", false).Return(nil)
+
+	b := &MockBroker{}
+
+	tk := &task.Task{
+		Task:     "add",
+		Args:     []any{float64(1), float64(2)},
+		Kwargs:   map[string]any{},
+		Delivery: delivery,
+	}
+	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1}, b)
+
+	b.AssertNotCalled(t, "PublishResult", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestWorker_publishesFailureOnMaxRetries(t *testing.T) {
+	reg := registry.NewTaskRegistry()
+	retryErr := &testRetryError{err: errors.New("boom"), maxRetries: 2}
+	require.NoError(t, reg.Register(
+		"fail", func() error { return retryErr }, []string{},
+	))
+
+	delivery := &MockDelivery{}
+	delivery.On("Ack", false).Return(nil)
+
+	var capturedBody []byte
+	b := &MockBroker{}
+	b.On("PublishResult", "reply-queue", "corr-id-456", mock.Anything).
+		Run(func(args mock.Arguments) { capturedBody = args[2].([]byte) }).
+		Return(nil)
+
+	tk := &task.Task{
+		Task:          "fail",
+		Args:          []any{},
+		Kwargs:        map[string]any{},
+		Delivery:      delivery,
+		ReplyTo:       "reply-queue",
+		CorrelationId: "corr-id-456",
+		RetryCount:    2, // already at max
+	}
+	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: true}, b)
+
+	b.AssertCalled(t, "PublishResult", "reply-queue", "corr-id-456", mock.Anything)
+	b.AssertNotCalled(t, "PublishTask", mock.Anything)
+
+	var reply map[string]any
+	require.NoError(t, json.Unmarshal(capturedBody, &reply))
+	assert.Equal(t, "corr-id-456", reply["task_id"])
+	assert.Equal(t, "FAILURE", reply["status"])
+}
+
+func TestWorker_doesNotPublishResultDuringRetry(t *testing.T) {
+	reg := registry.NewTaskRegistry()
+	retryErr := &testRetryError{err: errors.New("transient"), maxRetries: 3}
+	require.NoError(t, reg.Register(
+		"fail", func() error { return retryErr }, []string{},
+	))
+
+	delivery := &MockDelivery{}
+	delivery.On("Ack", false).Return(nil)
+
+	b := &MockBroker{}
+	b.On("PublishTask", mock.Anything).Return(nil)
+
+	tk := &task.Task{
+		Task:          "fail",
+		Args:          []any{},
+		Kwargs:        map[string]any{},
+		Delivery:      delivery,
+		ReplyTo:       "reply-queue",
+		CorrelationId: "corr-id-789",
+		RetryCount:    0,
+	}
+	runWorkerJob(t, reg, tk, WorkerConfig{Count: 1, AcksLate: true}, b)
+
+	b.AssertCalled(t, "PublishTask", mock.Anything)
+	b.AssertNotCalled(t, "PublishResult", mock.Anything, mock.Anything, mock.Anything)
 }

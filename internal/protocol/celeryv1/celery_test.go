@@ -9,6 +9,67 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+func TestBuildCeleryReplyPayload(t *testing.T) {
+	tests := []struct {
+		name       string
+		taskID     string
+		status     string
+		result     any
+		wantResult any
+	}{
+		{
+			name:       "single element result unwraps to scalar",
+			taskID:     "abc-123",
+			status:     "SUCCESS",
+			result:     []any{42},
+			wantResult: float64(42),
+		},
+		{
+			name:       "multi element result stays as slice",
+			taskID:     "abc-123",
+			status:     "SUCCESS",
+			result:     []any{1, 2},
+			wantResult: []any{float64(1), float64(2)},
+		},
+		{
+			name:       "nil result",
+			taskID:     "abc-123",
+			status:     "SUCCESS",
+			result:     nil,
+			wantResult: nil,
+		},
+		{
+			name:       "failure status with error string",
+			taskID:     "abc-123",
+			status:     "FAILURE",
+			result:     "something went wrong",
+			wantResult: "something went wrong",
+		},
+		{
+			name:       "task id and status propagated correctly",
+			taskID:     "xyz-789",
+			status:     "SUCCESS",
+			result:     []any{"hello"},
+			wantResult: "hello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := BuildCeleryReplyPayload(tt.taskID, tt.status, tt.result)
+			require.NoError(t, err)
+
+			var reply Reply
+			require.NoError(t, json.Unmarshal(body, &reply))
+			assert.Equal(t, tt.taskID, reply.TaskID)
+			assert.Equal(t, tt.status, reply.Status)
+			assert.Equal(t, tt.wantResult, reply.Result)
+			assert.Nil(t, reply.Traceback)
+			assert.Empty(t, reply.Children)
+		})
+	}
+}
+
 func TestCeleryV1Payload_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name       string
