@@ -26,7 +26,7 @@ func newTestMsg(
 	taskName string,
 	args []any,
 	kwargs map[string]any,
-	delivery broker.Delivery,
+	delivery broker.Deliverable,
 	replyTo, corrID string,
 	retryCount int8,
 ) *broker.RawMessage {

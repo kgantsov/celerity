@@ -275,7 +275,7 @@ func (b *RabbitMQBroker) consumeWorker(
 					ContentType:   msg.ContentType,
 					ReplyTo:       msg.ReplyTo,
 					CorrelationID: msg.CorrelationId,
-					Delivery:      &CeleryDelivery{delivery: msg},
+					Delivery:      &RabbitMQDelivery{delivery: msg},
 				}
 
 				select {

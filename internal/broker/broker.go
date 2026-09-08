@@ -6,20 +6,20 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type Delivery interface {
+type Deliverable interface {
 	Ack(multiple bool) error
 	Nack(multiple bool) error
 }
 
-type CeleryDelivery struct {
+type RabbitMQDelivery struct {
 	delivery amqp.Delivery
 }
 
-func (d *CeleryDelivery) Ack(multiple bool) error {
+func (d *RabbitMQDelivery) Ack(multiple bool) error {
 	return d.delivery.Ack(multiple)
 }
 
-func (d *CeleryDelivery) Nack(multiple bool) error {
+func (d *RabbitMQDelivery) Nack(multiple bool) error {
 	return d.delivery.Nack(multiple, true)
 }
 
@@ -30,7 +30,7 @@ type RawMessage struct {
 	ContentType   string
 	ReplyTo       string
 	CorrelationID string
-	Delivery      Delivery
+	Delivery      Deliverable
 }
 
 type BrokerConfig struct {
