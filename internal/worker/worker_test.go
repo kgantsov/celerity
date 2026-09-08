@@ -11,6 +11,7 @@ import (
 	"github.com/kgantsov/celerity/internal/broker"
 	celery "github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
+	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -26,7 +27,7 @@ func newTestMsg(
 	taskName string,
 	args []any,
 	kwargs map[string]any,
-	delivery broker.Deliverable,
+	delivery task.Deliverable,
 	replyTo, corrID string,
 	retryCount int8,
 ) *broker.RawMessage {

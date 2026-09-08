@@ -3,13 +3,9 @@ package broker
 import (
 	"context"
 
+	"github.com/kgantsov/celerity/internal/task"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
-
-type Deliverable interface {
-	Ack(multiple bool) error
-	Nack(multiple bool) error
-}
 
 type RabbitMQDelivery struct {
 	delivery amqp.Delivery
@@ -30,7 +26,7 @@ type RawMessage struct {
 	ContentType   string
 	ReplyTo       string
 	CorrelationID string
-	Delivery      Deliverable
+	Delivery      task.Deliverable
 }
 
 type BrokerConfig struct {
