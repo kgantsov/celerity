@@ -1,9 +1,11 @@
 package registry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 )
 
@@ -12,31 +14,44 @@ var ErrTooManyArguments = errors.New("too many arguments provided for task")
 var ErrInvalidArgumentType = errors.New("invalid argument type for task")
 var ErrMissingArgument = errors.New("missing required argument for task")
 
+var ctxType = reflect.TypeOf((*context.Context)(nil)).Elem()
+
 type Task struct {
 	fn         reflect.Value
 	paramNames []string // Maps kwargs keys -> positional index
+	hasCtx     bool     // true when the first param is context.Context
 }
 
 type TaskRegistry struct {
-	tasks map[string]Task
+	logger *slog.Logger
+	tasks  map[string]Task
 }
 
-func NewTaskRegistry() *TaskRegistry {
-	return &TaskRegistry{tasks: make(map[string]Task)}
+func NewTaskRegistry(logger *slog.Logger) *TaskRegistry {
+	return &TaskRegistry{logger: logger, tasks: make(map[string]Task)}
 }
 
-// Register registers a function along with its expected parameter names (in order)
+// Register registers a function along with its expected parameter names (in order).
+// If the function's first parameter is context.Context it is injected automatically
+// at call time and must not be included in paramNames.
 func (r *TaskRegistry) Register(name string, fn any, paramNames []string) error {
 	v := reflect.ValueOf(fn)
 	if v.Kind() != reflect.Func {
 		return fmt.Errorf("task %q is not a function", name)
 	}
 
-	if v.Type().NumIn() != len(paramNames) {
+	hasCtx := v.Type().NumIn() > 0 && v.Type().In(0).Implements(ctxType)
+
+	numUserParams := v.Type().NumIn()
+	if hasCtx {
+		numUserParams--
+	}
+
+	if numUserParams != len(paramNames) {
 		return fmt.Errorf(
 			"task %q expects %d params, but %d names were provided",
 			name,
-			v.Type().NumIn(),
+			numUserParams,
 			len(paramNames),
 		)
 	}
@@ -44,11 +59,13 @@ func (r *TaskRegistry) Register(name string, fn any, paramNames []string) error 
 	r.tasks[name] = Task{
 		fn:         v,
 		paramNames: paramNames,
+		hasCtx:     hasCtx,
 	}
 	return nil
 }
 
 func (r *TaskRegistry) Execute(
+	ctx context.Context,
 	taskName string, rawArgs []any, rawKwargs map[string]any,
 ) ([]any, error) {
 	task, exists := r.tasks[taskName]
@@ -60,33 +77,42 @@ func (r *TaskRegistry) Execute(
 	numArgs := fnType.NumIn()
 	inArgs := make([]reflect.Value, numArgs)
 
-	// Fill positional arguments first
+	// argOffset is 1 when the handler's first param is context.Context.
+	argOffset := 0
+	if task.hasCtx {
+		inArgs[0] = reflect.ValueOf(ctx)
+		argOffset = 1
+	}
+
+	numUserArgs := numArgs - argOffset
+
+	// Fill positional arguments
 	for i := 0; i < len(rawArgs); i++ {
-		if i >= numArgs {
+		if i >= numUserArgs {
 			return nil, ErrTooManyArguments
 		}
-		targetType := fnType.In(i)
+		targetType := fnType.In(argOffset + i)
 		val, err := convertValue(rawArgs[i], targetType)
 		if err != nil {
 			return nil, ErrInvalidArgumentType
 		}
-		inArgs[i] = val
+		inArgs[argOffset+i] = val
 	}
 
 	// Fill keyword arguments by matching parameter names
-	for i := len(rawArgs); i < numArgs; i++ {
+	for i := len(rawArgs); i < numUserArgs; i++ {
 		paramName := task.paramNames[i]
 		kwVal, found := rawKwargs[paramName]
 		if !found {
 			return nil, ErrMissingArgument
 		}
 
-		targetType := fnType.In(i)
+		targetType := fnType.In(argOffset + i)
 		val, err := convertValue(kwVal, targetType)
 		if err != nil {
 			return nil, ErrInvalidArgumentType
 		}
-		inArgs[i] = val
+		inArgs[argOffset+i] = val
 	}
 
 	results := task.fn.Call(inArgs)

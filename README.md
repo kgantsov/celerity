@@ -10,6 +10,7 @@ A Go implementation of a [Celery](https://docs.celeryq.dev/)-compatible task que
 - Optional late acknowledgement (`AcksLate`)
 - Automatic retries with configurable per-task retry limit
 - Graceful shutdown with bounded timeouts
+- Structured logging via `log/slog` with task-scoped context
 
 ## Requirements
 
@@ -92,6 +93,7 @@ See [`_examples/worker/`](./_examples/worker/) for a full working example.
 | `WithWorkers(n)` | `5` | Number of concurrent worker goroutines |
 | `WithPrefetchCount(n)` | `5` | AMQP QoS prefetch count |
 | `WithAcksLate(bool)` | `false` | Acknowledge messages after the handler returns instead of on delivery |
+| `WithLogger(logger)` | `slog.Default()` | Structured logger used by all internal components |
 
 ## Registering tasks
 
@@ -103,6 +105,33 @@ c.RegisterTask("task.name", HandlerFunc, []string{"param1", "param2"})
 - Arguments are matched positionally first, then by name from kwargs.
 - JSON numeric types (`float64`) are automatically coerced to the Go parameter type (`int`, `float32`, etc.).
 - Complex types (`map[string]any`, structs, slices) are handled via JSON round-trip.
+
+## Logging
+
+Celerity uses `log/slog` internally. Pass any `*slog.Logger` via `WithLogger`; all internal components (broker, dispatcher, workers) inherit it with their own `component` attribute pre-set.
+
+```go
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+c := celerity.NewCelerity(url, queues, celerity.WithLogger(logger))
+```
+
+### Logging inside task handlers
+
+If a handler accepts `context.Context` as its first parameter, Celerity injects a logger pre-tagged with the task name and ID. Retrieve it with `celerity.Logger(ctx)`:
+
+```go
+func ReindexFileTask(ctx context.Context, fileID string) error {
+    log := celerity.Logger(ctx)
+    log.Info("reindexing file", "file_id", fileID)
+    // every line automatically carries task= and id=
+    return nil
+}
+
+// paramNames does not include ctx
+c.RegisterTask("hello.reindex_file", ReindexFileTask, []string{"file_id"})
+```
+
+Handlers that don't need logging can omit `ctx` entirely — the signature is unchanged and the feature is strictly opt-in.
 
 ## Retries
 
@@ -122,9 +151,10 @@ The task is republished to the same queue and retried up to `MaxRetries` times. 
 ## Project layout
 
 ```
-celerity.go              # Public API: NewCelerity, Start, Stop, RegisterTask
+celerity.go              # Public API: NewCelerity, Start, Stop, RegisterTask, Logger
 internal/
   broker/                # RabbitMQ AMQP consumer with auto-reconnect
+  ctxlog/                # Context key for task-scoped logger propagation
   protocol/celery/       # Celery v2 message parser
   registry/              # Task name → handler function mapping (reflection-based)
   worker/                # Dispatcher + worker pool

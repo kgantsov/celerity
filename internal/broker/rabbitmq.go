@@ -3,7 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -22,6 +22,7 @@ type RabbitMQBroker struct {
 	parentCtx context.Context
 	ctx       context.Context
 	cancel    context.CancelFunc
+	logger    *slog.Logger
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 	connMu    sync.RWMutex
@@ -31,7 +32,7 @@ type RabbitMQBroker struct {
 // NewRabbitMQBroker initializes a new broker instance. parentCtx signals when
 // to stop consuming (e.g. on Ctrl+C); call Close() separately to actually tear
 // down the AMQP connection once all in-flight tasks have finished.
-func NewRabbitMQBroker(parentCtx context.Context, config BrokerConfig) *RabbitMQBroker {
+func NewRabbitMQBroker(parentCtx context.Context, logger *slog.Logger, config BrokerConfig) *RabbitMQBroker {
 	// Derive ctx from Background, not from parentCtx. This keeps the AMQP
 	// connection alive even after parentCtx is canceled, so workers can still
 	// ack deliveries for tasks they picked up before the shutdown signal.
@@ -42,6 +43,7 @@ func NewRabbitMQBroker(parentCtx context.Context, config BrokerConfig) *RabbitMQ
 		parentCtx: parentCtx,
 		ctx:       ctx,
 		cancel:    cancel,
+		logger:    logger,
 	}
 }
 
@@ -87,11 +89,6 @@ func (b *RabbitMQBroker) PublishMessage(msg *RawMessage) error {
 	}
 	defer ch.Close()
 
-	// body, err := json.Marshal([]any{task.Args, task.Kwargs, map[string]any{}})
-	// if err != nil {
-	// 	return fmt.Errorf("failed to serialize task: %w", err)
-	// }
-
 	return ch.Publish(
 		"",        // default exchange
 		msg.Queue, // routing key == queue name
@@ -100,12 +97,7 @@ func (b *RabbitMQBroker) PublishMessage(msg *RawMessage) error {
 		amqp.Publishing{
 			ContentType: "application/json",
 			Headers:     msg.Headers,
-			// Headers: amqp.Table{
-			// 	"id":      task.ID,
-			// 	"task":    task.Task,
-			// 	"retries": task.RetryCount,
-			// },
-			Body: msg.Body,
+			Body:        msg.Body,
 		},
 	)
 }
@@ -120,7 +112,7 @@ const closeTimeout = 5 * time.Second
 // connection is stuck performing its close handshake with the server.
 func (b *RabbitMQBroker) Close() {
 	b.closeOnce.Do(func() {
-		log.Println("[Broker] Closing broker...")
+		b.logger.Info("closing broker")
 		b.cancel() // Signal all loops and workers to stop
 
 		done := make(chan struct{})
@@ -134,26 +126,24 @@ func (b *RabbitMQBroker) Close() {
 			// All goroutines exited on their own; safe to close taskChan since
 			// nothing can still be sending on it.
 			close(b.msgChan)
-			log.Println("[Broker] Broker closed successfully.")
+			b.logger.Info("broker closed")
 		case <-time.After(closeTimeout):
 			// Something (most likely the AMQP connection/channel close
 			// handshake) is stuck. Give up waiting instead of hanging the
 			// whole process forever. We deliberately do NOT close taskChan
 			// here: a goroutine may still be alive and could send on it,
 			// which would panic if the channel were closed.
-			log.Println(
-				"[Broker] Timed out waiting for broker goroutines to stop; forcing shutdown.",
-			)
+			b.logger.Warn("timed out waiting for broker goroutines, forcing shutdown")
 		}
 	})
 }
 
 func (b *RabbitMQBroker) manageConnection() {
 	for {
-		log.Println("[Broker] Attempting to connect to RabbitMQ...")
+		b.logger.Info("connecting to RabbitMQ", "url", b.config.URL)
 		conn, err := amqp.Dial(b.config.URL)
 		if err != nil {
-			log.Printf("[Broker] Connection failed: %v. Retrying in 5s...", err)
+			b.logger.Error("connection failed, retrying in 5s", "err", err)
 			select {
 			case <-b.ctx.Done():
 				return
@@ -161,7 +151,7 @@ func (b *RabbitMQBroker) manageConnection() {
 				continue
 			}
 		}
-		log.Println("[Broker] Connected!")
+		b.logger.Info("connected to RabbitMQ")
 		b.connMu.Lock()
 		b.conn = conn
 		b.connMu.Unlock()
@@ -197,7 +187,7 @@ func (b *RabbitMQBroker) manageConnection() {
 			conn.CloseDeadline(time.Now().Add(2 * time.Second))
 			return
 		case err := <-conn.NotifyClose(make(chan *amqp.Error, 1)):
-			log.Printf("[Broker] Connection lost: %v. Reconnecting...", err)
+			b.logger.Warn("connection lost, reconnecting", "err", err)
 			cancelConn()
 			workerWg.Wait()
 			b.connMu.Lock()
@@ -224,7 +214,7 @@ func (b *RabbitMQBroker) consumeWorker(
 
 		ch, err := conn.Channel()
 		if err != nil {
-			log.Printf("[%s] Failed to open channel: %v. Retrying in 2s...", queueName, err)
+			b.logger.Error("failed to open channel, retrying in 2s", "queue", queueName, "err", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -245,7 +235,7 @@ func (b *RabbitMQBroker) consumeWorker(
 		}
 
 		chClose := ch.NotifyClose(make(chan *amqp.Error, 1))
-		log.Printf("[%s] Worker listening...", queueName)
+		b.logger.Info("consumer started", "queue", queueName)
 
 	consumeLoop:
 		for {
@@ -260,13 +250,13 @@ func (b *RabbitMQBroker) consumeWorker(
 				// deliveries they already picked up.
 				return
 			case err := <-chClose:
-				log.Printf("[%s] Channel closed: %v. Rebuilding...", queueName, err)
+				b.logger.Warn("channel closed, rebuilding", "queue", queueName, "err", err)
 				break consumeLoop
 			case msg, ok := <-msgs:
 				if !ok {
 					break consumeLoop
 				}
-				log.Printf("[%s] Received a message: %s\n", queueName, msg.Body)
+				b.logger.Debug("received message", "queue", queueName, "body", string(msg.Body))
 
 				rawMsg := &RawMessage{
 					Queue:         queueName,

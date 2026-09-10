@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -45,10 +46,10 @@ func newTestMsg(
 
 func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, msg *broker.RawMessage, config WorkerConfig, b *MockBroker) {
 	t.Helper()
-	proto, err := celery.NewProtocol("2.0")
+	proto, err := celery.NewProtocol(slog.Default(), "2.0")
 	require.NoError(t, err)
 	pool := make(chan chan Job, 1)
-	w := NewWorker(reg, pool, config, b, proto)
+	w := NewWorker(slog.Default(), reg, pool, config, b, proto)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	w.Start(ctx)
@@ -75,7 +76,7 @@ func TestWorker_successAcks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := registry.NewTaskRegistry()
+			reg := registry.NewTaskRegistry(slog.Default())
 			assert.NoError(
 				t, reg.Register(
 					"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
@@ -123,7 +124,7 @@ func TestWorker_registryErrorAcks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := registry.NewTaskRegistry()
+			reg := registry.NewTaskRegistry(slog.Default())
 			assert.NoError(
 				t, reg.Register(
 					"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
@@ -144,7 +145,7 @@ func TestWorker_registryErrorAcks(t *testing.T) {
 
 // AcksLate=true: transient errors republish for retry then ack the original delivery.
 func TestWorker_businessErrorRetries(t *testing.T) {
-	reg := registry.NewTaskRegistry()
+	reg := registry.NewTaskRegistry(slog.Default())
 	retryErr := &testRetryError{err: errors.New("transient"), maxRetries: 3}
 	assert.NoError(
 		t, reg.Register("fail", func() error { return retryErr }, []string{}),
@@ -166,7 +167,7 @@ func TestWorker_businessErrorRetries(t *testing.T) {
 
 // AcksLate=false: delivery is acked before execution regardless of outcome.
 func TestWorker_acksLateFalse_businessErrorAcks(t *testing.T) {
-	reg := registry.NewTaskRegistry()
+	reg := registry.NewTaskRegistry(slog.Default())
 	assert.NoError(
 		t, reg.Register("fail", func() error { return errors.New("transient") }, []string{}),
 	)
@@ -183,14 +184,14 @@ func TestWorker_acksLateFalse_businessErrorAcks(t *testing.T) {
 
 func TestWorker_stopWithoutStart(t *testing.T) {
 	pool := make(chan chan Job, 1)
-	proto, err := celery.NewProtocol("2.0")
+	proto, err := celery.NewProtocol(slog.Default(), "2.0")
 	require.NoError(t, err)
-	w := NewWorker(registry.NewTaskRegistry(), pool, WorkerConfig{Count: 1}, &MockBroker{}, proto)
+	w := NewWorker(slog.Default(), registry.NewTaskRegistry(slog.Default()), pool, WorkerConfig{Count: 1}, &MockBroker{}, proto)
 	assert.NotPanics(t, func() { w.Stop() })
 }
 
 func TestWorker_publishesSuccessResult(t *testing.T) {
-	reg := registry.NewTaskRegistry()
+	reg := registry.NewTaskRegistry(slog.Default())
 	require.NoError(t, reg.Register(
 		"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
 	))
@@ -219,7 +220,7 @@ func TestWorker_publishesSuccessResult(t *testing.T) {
 }
 
 func TestWorker_doesNotPublishResultWithoutReplyTo(t *testing.T) {
-	reg := registry.NewTaskRegistry()
+	reg := registry.NewTaskRegistry(slog.Default())
 	require.NoError(t, reg.Register(
 		"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
 	))
@@ -236,7 +237,7 @@ func TestWorker_doesNotPublishResultWithoutReplyTo(t *testing.T) {
 }
 
 func TestWorker_publishesFailureOnMaxRetries(t *testing.T) {
-	reg := registry.NewTaskRegistry()
+	reg := registry.NewTaskRegistry(slog.Default())
 	retryErr := &testRetryError{err: errors.New("boom"), maxRetries: 2}
 	require.NoError(t, reg.Register(
 		"fail", func() error { return retryErr }, []string{},
@@ -265,7 +266,7 @@ func TestWorker_publishesFailureOnMaxRetries(t *testing.T) {
 }
 
 func TestWorker_doesNotPublishResultDuringRetry(t *testing.T) {
-	reg := registry.NewTaskRegistry()
+	reg := registry.NewTaskRegistry(slog.Default())
 	retryErr := &testRetryError{err: errors.New("transient"), maxRetries: 3}
 	require.NoError(t, reg.Register(
 		"fail", func() error { return retryErr }, []string{},

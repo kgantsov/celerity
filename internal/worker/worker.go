@@ -3,9 +3,10 @@ package worker
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 
 	"github.com/kgantsov/celerity/internal/broker"
+	"github.com/kgantsov/celerity/internal/ctxlog"
 	"github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
 	"github.com/kgantsov/celerity/internal/task"
@@ -18,6 +19,7 @@ type WorkerConfig struct {
 
 // Worker represents the worker that executes the job
 type Worker struct {
+	logger     *slog.Logger
 	config     WorkerConfig
 	broker     broker.Broker
 	registry   *registry.TaskRegistry
@@ -29,6 +31,7 @@ type Worker struct {
 }
 
 func NewWorker(
+	logger *slog.Logger,
 	registry *registry.TaskRegistry,
 	workerPool chan chan Job,
 	config WorkerConfig,
@@ -36,6 +39,7 @@ func NewWorker(
 	proto celery.Protocol,
 ) *Worker {
 	return &Worker{
+		logger:     logger,
 		config:     config,
 		broker:     broker,
 		registry:   registry,
@@ -51,7 +55,7 @@ func NewWorker(
 func (w *Worker) Start(ctx context.Context) {
 	w.ctx, w.cancel = context.WithCancel(ctx)
 
-	log.Println("Worker started")
+	w.logger.Debug("worker started")
 
 	go func() {
 		for {
@@ -68,48 +72,50 @@ func (w *Worker) Start(ctx context.Context) {
 
 				tk, err := w.proto.ToTask(msg)
 				if err != nil {
-					log.Printf("Failed to parse message: %s", err.Error())
+					w.logger.Error("failed to parse message", "err", err)
 					job.GetWaitGroup().Done()
 					continue
 				}
 
-				log.Printf("Processing a task: %+v", tk)
+				logger := w.logger.With("task", tk.Task, "id", tk.ID)
+				logger.Debug("processing task")
 
 				if !w.config.AcksLate {
 					tk.Delivery.Ack(false)
 				}
 
-				result, err := w.registry.Execute(tk.Task, tk.Args, tk.Kwargs)
+				execCtx := ctxlog.With(w.ctx, logger)
+				result, err := w.registry.Execute(execCtx, tk.Task, tk.Args, tk.Kwargs)
 
 				if err != nil {
-					log.Printf("Error executing task: %s", err.Error())
+					logger.Error("task execution failed", "err", err)
 					if retryable, ok := errors.AsType[task.Retryable](err); ok {
 						if tk.RetryCount < retryable.GetMaxRetries() {
-							log.Printf("Retrying task, attempt %d", tk.RetryCount+1)
+							logger.Info("retrying task", "attempt", tk.RetryCount+1)
 							tk.RetryCount++
 
 							msg, err := w.proto.ToRawMessage(tk)
 							if err != nil {
-								log.Printf("Failed to serialize task for retry: %s", err.Error())
-								w.replyToResultQueue(tk, "FAILURE", result)
+								logger.Error("failed to serialize task for retry", "err", err)
+								w.replyToResultQueue(logger, tk, "FAILURE", result)
 								continue
 							}
 
 							if pubErr := w.broker.PublishMessage(msg); pubErr != nil {
-								log.Printf("Failed to republish task: %s", pubErr.Error())
+								logger.Error("failed to republish task", "err", pubErr)
 							}
 						} else {
-							log.Printf("Max retries reached for task: %+v", tk)
-							w.replyToResultQueue(tk, "FAILURE", result)
+							logger.Warn("max retries reached")
+							w.replyToResultQueue(logger, tk, "FAILURE", result)
 						}
 					}
 					if w.config.AcksLate {
 						tk.Delivery.Ack(false)
 					}
 				} else {
-					log.Printf("Task result: %v\n", result)
+					logger.Debug("task succeeded", "result", result)
 
-					w.replyToResultQueue(tk, "SUCCESS", result)
+					w.replyToResultQueue(logger, tk, "SUCCESS", result)
 
 					if w.config.AcksLate {
 						tk.Delivery.Ack(false)
@@ -127,14 +133,14 @@ func (w *Worker) Start(ctx context.Context) {
 	}()
 }
 
-func (w *Worker) replyToResultQueue(tk *task.Task, status string, result any) {
+func (w *Worker) replyToResultQueue(logger *slog.Logger, tk *task.Task, status string, result any) {
 	if tk.ReplyTo == "" {
-		log.Printf("No reply_to queue specified for task: %+v", tk)
+		logger.Debug("no reply_to queue, skipping result publish")
 		return
 	}
 	msg, err := w.proto.BuildReplyMessage(tk, status, result)
 	if err != nil {
-		log.Printf("Failed to build reply message: %s", err.Error())
+		logger.Error("failed to build reply message", "err", err)
 		return
 	}
 

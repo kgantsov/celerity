@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/kgantsov/celerity/internal/task"
 )
 
-type CeleryPtotocolV2 struct{}
+type CeleryPtotocolV2 struct {
+	logger *slog.Logger
+}
 
 // CeleryV2Payload represents the body array: [args, kwargs, embed]
 type CeleryV2Payload struct {
@@ -70,8 +72,6 @@ func (p *CeleryPtotocolV2) ToTask(msg *broker.RawMessage) (*task.Task, error) {
 	if taskName, ok := msg.Headers["task"].(string); ok {
 		task.Task = taskName
 	}
-
-	log.Printf("HEADERS: %v\n", msg.Headers)
 
 	// read retry count and max retries from headers if present
 	if retryCount, ok := msg.Headers["retries"].(int8); ok {

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestTaskScheduler_ScheduleAndStop(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := registry.NewTaskRegistry()
+			reg := registry.NewTaskRegistry(slog.Default())
 			assert.NoError(t, reg.Register("noop", func() error { return nil }, []string{}))
 			assert.NoError(
 				t, reg.Register(
@@ -33,10 +34,10 @@ func TestTaskScheduler_ScheduleAndStop(t *testing.T) {
 				),
 			)
 
-			proto, err := celery.NewProtocol("2.0")
+			proto, err := celery.NewProtocol(slog.Default(), "2.0")
 			require.NoError(t, err)
 			jobQueue := make(chan Job, 10)
-			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{}, proto)
+			d := NewDispatcher(slog.Default(), reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{}, proto)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			d.Run(ctx)

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/kgantsov/celerity/internal/protocol/celery"
@@ -9,6 +10,7 @@ import (
 )
 
 type Dispatcher struct {
+	logger     *slog.Logger
 	config     WorkerConfig
 	broker     broker.Broker
 	registry   *registry.TaskRegistry
@@ -21,6 +23,7 @@ type Dispatcher struct {
 }
 
 func NewDispatcher(
+	logger *slog.Logger,
 	registry *registry.TaskRegistry,
 	JobQueue chan Job,
 	config WorkerConfig,
@@ -29,6 +32,7 @@ func NewDispatcher(
 ) *Dispatcher {
 	WorkerPool := make(chan chan Job, config.Count)
 	return &Dispatcher{
+		logger:     logger,
 		config:     config,
 		broker:     broker,
 		registry:   registry,
@@ -49,7 +53,7 @@ func (d *Dispatcher) Run(ctx context.Context) {
 
 	// starting n number of workers
 	for i := 0; i < d.config.Count; i++ {
-		worker := NewWorker(d.registry, d.WorkerPool, d.config, d.broker, d.proto)
+		worker := NewWorker(d.logger, d.registry, d.WorkerPool, d.config, d.broker, d.proto)
 		worker.Start(d.ctx)
 		d.Workers = append(d.Workers, worker)
 	}

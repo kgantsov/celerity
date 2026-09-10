@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -14,11 +15,11 @@ import (
 )
 
 func TestDispatcher_StopWithoutRun(t *testing.T) {
-	reg := registry.NewTaskRegistry()
+	reg := registry.NewTaskRegistry(slog.Default())
 	jobQueue := make(chan Job, 1)
-	proto, err := celery.NewProtocol("2.0")
+	proto, err := celery.NewProtocol(slog.Default(), "2.0")
 	require.NoError(t, err)
-	d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{}, proto)
+	d := NewDispatcher(slog.Default(), reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{}, proto)
 	assert.NotPanics(t, func() { d.Stop() })
 }
 
@@ -33,11 +34,11 @@ func TestDispatcher_RunStop(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := registry.NewTaskRegistry()
+			reg := registry.NewTaskRegistry(slog.Default())
 			jobQueue := make(chan Job, 1)
-			proto, err := celery.NewProtocol("2.0")
+			proto, err := celery.NewProtocol(slog.Default(), "2.0")
 			require.NoError(t, err)
-			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: tt.maxWorkers}, &MockBroker{}, proto)
+			d := NewDispatcher(slog.Default(), reg, jobQueue, WorkerConfig{Count: tt.maxWorkers}, &MockBroker{}, proto)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			d.Run(ctx)
@@ -61,13 +62,13 @@ func TestDispatcher_DispatchesJobsToWorkers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := registry.NewTaskRegistry()
+			reg := registry.NewTaskRegistry(slog.Default())
 			assert.NoError(t, reg.Register("noop", func() error { return nil }, []string{}))
 
-			proto, err := celery.NewProtocol("2.0")
+			proto, err := celery.NewProtocol(slog.Default(), "2.0")
 			require.NoError(t, err)
 			jobQueue := make(chan Job, tt.jobCount)
-			d := NewDispatcher(reg, jobQueue, WorkerConfig{Count: tt.workers}, &MockBroker{}, proto)
+			d := NewDispatcher(slog.Default(), reg, jobQueue, WorkerConfig{Count: tt.workers}, &MockBroker{}, proto)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()

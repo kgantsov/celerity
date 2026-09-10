@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -18,47 +19,46 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
 	ctx, stop := signal.NotifyContext(
 		context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	celerity := celerity.NewCelerity(
+	c := celerity.NewCelerity(
 		"amqp://guest:guest@localhost:5672/",
 		[]string{"celery"},
 		celerity.WithWorkers(5),
 		celerity.WithPrefetchCount(5),
 		celerity.WithAcksLate(true),
+		celerity.WithLogger(logger),
 	)
 
-	celerity.RegisterTask(
-		"hello.add", AddTask, []string{"a", "b"},
-	)
-	celerity.RegisterTask(
-		"hello.append", AppendTask, []string{"a", "b"},
-	)
-	celerity.RegisterTask(
-		"hello.reindex_file", ReindexFileTask, []string{"file_id"},
-	)
-	celerity.RegisterTask(
+	c.RegisterTask("hello.add", AddTask, []string{"a", "b"})
+	c.RegisterTask("hello.append", AppendTask, []string{"a", "b"})
+	c.RegisterTask("hello.reindex_file", ReindexFileTask, []string{"file_id"})
+	c.RegisterTask(
 		"hello.update_metadata",
 		UpdateMetadataTask,
 		[]string{"assetID", "mode", "user_id", "metadata"},
 	)
 
-	log.Println("Starting task processor loop...")
-	celerity.Start(ctx)
+	logger.Info("starting task processor")
+	c.Start(ctx)
 
 	<-ctx.Done()
 	// Stop relaying further signals so a second Ctrl+C falls back to Go's
 	// default (immediate) signal handling instead of being swallowed.
 	stop()
-	log.Println("Shutdown signal received, stopping gracefully...")
+	logger.Info("shutdown signal received, stopping gracefully")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	celerity.Stop(shutdownCtx)
-	log.Println("Shutdown complete.")
+	c.Stop(shutdownCtx)
+	logger.Info("shutdown complete")
 }
 
 func AddTask(a, b int) (int, error) {
@@ -70,15 +70,11 @@ func AppendTask(a []string, b string) ([]string, error) {
 }
 
 func UpdateMetadataTask(
-	assetID string, mode string, user_id string, metadata map[string]any,
+	ctx context.Context,
+	assetID string, mode string, userID string, metadata map[string]any,
 ) error {
-	log.Printf(
-		"Updating metadata for assetID: %s, mode: %s, user_id: %s, metadata: %v\n",
-		assetID,
-		mode,
-		user_id,
-		metadata,
-	)
+	log := celerity.Logger(ctx)
+	log.Info("updating metadata", "asset_id", assetID, "mode", mode, "user_id", userID)
 	time.Sleep(5 * time.Second) // Simulate some processing time
 	return &celerity.RetryError{
 		Err:        fmt.Errorf("simulated error for assetID: %s", assetID),
@@ -86,9 +82,10 @@ func UpdateMetadataTask(
 	}
 }
 
-func ReindexFileTask(fileID string) error {
-	log.Printf("Reindexing file with ID: %s\n", fileID)
+func ReindexFileTask(ctx context.Context, fileID string) error {
+	log := celerity.Logger(ctx)
+	log.Info("reindexing file", "file_id", fileID)
 	time.Sleep(3 * time.Second) // Simulate some processing time
-	log.Printf("Reindexed file with ID: %s\n", fileID)
+	log.Info("reindexing complete", "file_id", fileID)
 	return nil
 }

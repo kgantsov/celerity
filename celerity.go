@@ -2,16 +2,25 @@ package celerity
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/kgantsov/celerity/internal/broker"
+	"github.com/kgantsov/celerity/internal/ctxlog"
 	"github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
 	"github.com/kgantsov/celerity/internal/worker"
 )
 
+// Logger returns the task-scoped logger from ctx. Inside a task handler,
+// this logger automatically carries the task name and ID as structured fields.
+// Falls back to slog.Default() when called outside a task.
+func Logger(ctx context.Context) *slog.Logger {
+	return ctxlog.From(ctx)
+}
+
 type Config struct {
+	Logger *slog.Logger
 	Broker broker.BrokerConfig
 	Worker worker.WorkerConfig
 }
@@ -50,12 +59,18 @@ func WithAcksLate(acksLate bool) Option {
 	}
 }
 
+// WithLogger sets the logger for the Celerity server
+func WithLogger(logger *slog.Logger) Option {
+	return func(s *Celerity) {
+		s.config.Logger = logger
+	}
+}
+
 // NewCelerity creates a new Celerity server with the given broker URL, queues,
 // and optional configurations.
 func NewCelerity(brokerURL string, queues []string, opts ...Option) *Celerity {
-	registry := registry.NewTaskRegistry()
+
 	server := &Celerity{
-		registry: registry,
 		config: Config{
 			Broker: broker.BrokerConfig{
 				URL:           brokerURL,
@@ -75,7 +90,15 @@ func NewCelerity(brokerURL string, queues []string, opts ...Option) *Celerity {
 		opt(server)
 	}
 
-	proto, _ := celery.NewProtocol(server.protoVersion)
+	if server.config.Logger == nil {
+		server.config.Logger = slog.Default()
+	}
+
+	server.registry = registry.NewTaskRegistry(server.config.Logger.With("component", "registry"))
+
+	proto, _ := celery.NewProtocol(
+		server.config.Logger.With("component", "protocol"), server.protoVersion,
+	)
 	server.proto = proto
 
 	return server
@@ -90,14 +113,21 @@ func (c *Celerity) Start(ctx context.Context) {
 	JobQueue := make(chan worker.Job)
 
 	if c.broker == nil {
-		c.broker = broker.NewRabbitMQBroker(ctx, c.config.Broker)
+		c.broker = broker.NewRabbitMQBroker(
+			ctx, c.config.Logger.With("component", "broker"), c.config.Broker,
+		)
 	}
 
 	// Start the broker background routines
 	c.broker.Start()
 
 	c.dispatcher = worker.NewDispatcher(
-		c.registry, JobQueue, c.config.Worker, c.broker, c.proto,
+		c.config.Logger.With("component", "dispatcher"),
+		c.registry,
+		JobQueue,
+		c.config.Worker,
+		c.broker,
+		c.proto,
 	)
 	c.dispatcher.Run(ctx)
 
@@ -109,11 +139,11 @@ func (c *Celerity) Start(ctx context.Context) {
 		for {
 			t, err := c.broker.GetMessage(ctx)
 			if err != nil {
-				log.Printf("Broker stopped: %v", err)
+				c.config.Logger.Info("broker stopped", "reason", err)
 				return
 			}
 
-			log.Printf("Dispatching task: %+v\n", t)
+			c.config.Logger.Debug("dispatching task", "queue", t.Queue)
 
 			jobWg.Add(1)
 			job := worker.NewJob(t, &jobWg)
@@ -136,7 +166,7 @@ func (c *Celerity) Start(ctx context.Context) {
 // until all in-flight tasks have acked/nacked their deliveries, so we close
 // the broker only after the task loop (and its jobWg) have fully drained.
 func (c *Celerity) Stop(ctx context.Context) {
-	log.Println("Stopping Celerity...")
+	c.config.Logger.Info("stopping")
 
 	c.dispatcher.Stop()
 
@@ -148,9 +178,9 @@ func (c *Celerity) Stop(ctx context.Context) {
 
 	select {
 	case <-done:
-		log.Println("Celerity stopped cleanly.")
+		c.config.Logger.Info("stopped")
 	case <-ctx.Done():
-		log.Println("Timed out waiting for Celerity to stop; forcing shutdown.")
+		c.config.Logger.Warn("timed out stopping, forcing shutdown")
 	}
 
 	// Close the broker after all tasks have acked so the AMQP connection is
