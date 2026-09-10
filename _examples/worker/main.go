@@ -22,7 +22,7 @@ func main() {
 		context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	celerity, err := celerity.NewCelerity(
+	celerity := celerity.NewCelerity(
 		"amqp://guest:guest@localhost:5672/",
 		[]string{"celery"},
 		celerity.WithWorkers(5),
@@ -30,15 +30,14 @@ func main() {
 		celerity.WithAcksLate(true),
 	)
 
-	if err != nil {
-		log.Fatalf("Failed to create Celerity instance: %v", err)
-	}
-
 	celerity.RegisterTask(
 		"hello.add", AddTask, []string{"a", "b"},
 	)
 	celerity.RegisterTask(
 		"hello.append", AppendTask, []string{"a", "b"},
+	)
+	celerity.RegisterTask(
+		"hello.reindex_file", ReindexFileTask, []string{"file_id"},
 	)
 	celerity.RegisterTask(
 		"hello.update_metadata",
@@ -85,4 +84,11 @@ func UpdateMetadataTask(
 		Err:        fmt.Errorf("simulated error for assetID: %s", assetID),
 		MaxRetries: 3,
 	}
+}
+
+func ReindexFileTask(fileID string) error {
+	log.Printf("Reindexing file with ID: %s\n", fileID)
+	time.Sleep(3 * time.Second) // Simulate some processing time
+	log.Printf("Reindexed file with ID: %s\n", fileID)
+	return nil
 }

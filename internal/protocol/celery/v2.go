@@ -1,6 +1,7 @@
 package celery
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,24 +18,33 @@ type CeleryV2Payload struct {
 	Kwargs map[string]any `json:"1"`
 }
 
-// UnmarshalJSON handles decoding the top-level JSON array format
+// UnmarshalJSON handles both the array format [[args], {kwargs}, embed]
+// and the object format {"0": [args], "1": {kwargs}} sent by some Celery producers.
 func (p *CeleryV2Payload) UnmarshalJSON(data []byte) error {
-	var raw []json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
+	// Trim leading whitespace to find the first meaningful byte.
+	trimmed := bytes.TrimLeft(data, " \t\r\n")
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var raw []json.RawMessage
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw[0], &p.Args); err != nil {
+				return err
+			}
+		}
+		if len(raw) > 1 {
+			if err := json.Unmarshal(raw[1], &p.Kwargs); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw[0], &p.Args); err != nil {
-			return err
-		}
-	}
-	if len(raw) > 1 {
-		if err := json.Unmarshal(raw[1], &p.Kwargs); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Object format: {"0": [args], "1": {kwargs}}.
+	// Use an alias to avoid infinite recursion and rely on struct field tags.
+	type plain CeleryV2Payload
+	return json.Unmarshal(data, (*plain)(p))
 }
 
 type Reply struct {
