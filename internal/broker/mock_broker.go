@@ -6,6 +6,22 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+type MockPublisher struct {
+	mock.Mock
+}
+
+func (m *MockPublisher) Connect() error {
+	return m.Called().Error(0)
+}
+
+func (m *MockPublisher) PublishMessage(msg *RawMessage) error {
+	return m.Called(msg).Error(0)
+}
+
+func (m *MockPublisher) Close() {
+	m.Called()
+}
+
 type MockBroker struct {
 	mock.Mock
 }

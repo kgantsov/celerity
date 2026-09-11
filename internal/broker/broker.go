@@ -35,18 +35,20 @@ type BrokerConfig struct {
 	PrefetchCount int
 }
 
+// Publisher is the minimal interface for sending tasks to a broker.
+// Implementations only need a connection — no consumer goroutines required.
+type Publisher interface {
+	Connect() error
+	PublishMessage(msg *RawMessage) error
+	Close()
+}
+
+// Broker is the full consumer+publisher interface used by the worker.
+// Start establishes the connection and spawns consumer goroutines;
+// Close tears everything down.
 type Broker interface {
-	// Start starts the broker and begins consuming tasks from the queue.
 	Start()
-	// GetMessage retrieves a task from the broker. It returns a pointer to a task.
-	// Task and an error if any occurred during retrieval. Block until a task is
-	// available or the context is canceled.
 	GetMessage(ctx context.Context) (*RawMessage, error)
-	// PublishMessage publishes a task to the broker. It takes a pointer to a task.Task
-	// and returns an error if any occurred during publishing.
 	PublishMessage(message *RawMessage) error
-	// PublishResult publishes the result of a task to the broker. It takes a replyTo string,
-	// a correlationID string, and a body byte slice. It returns an error if any
-	// occurred during publishing.
 	Close()
 }

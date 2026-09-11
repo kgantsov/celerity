@@ -5,6 +5,7 @@ A Go implementation of a [Celery](https://docs.celeryq.dev/)-compatible task que
 ## Features
 
 - Consumes tasks published by Python Celery (v2 message format)
+- Publishes tasks to Celery queues from Go (broker URL auto-selects the backend)
 - Positional and keyword argument support with automatic type coercion from JSON
 - Configurable worker pool and AMQP prefetch count
 - Optional late acknowledgement (`AcksLate`)
@@ -84,6 +85,36 @@ add.delay(5, 3)
 
 See [`_examples/worker/`](./_examples/worker/) for a full working example.
 
+## Publishing tasks from Go
+
+Use `Client` to enqueue tasks without running a worker. The broker URL determines the backend (currently `amqp://` / `amqps://`):
+
+```go
+client := celerity.NewClient("amqp://guest:guest@localhost:5672/")
+if err := client.Connect(); err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+
+id, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
+    Args:  []any{5, 3},
+    Queue: "celery", // defaults to "celery" if omitted
+})
+```
+
+`PublishOptions` fields:
+
+| Field | Default | Description |
+|---|---|---|
+| `Queue` | `"celery"` | Destination queue |
+| `Args` | `nil` | Positional arguments |
+| `Kwargs` | `nil` | Keyword arguments |
+| `TaskID` | auto UUID | Celery task ID |
+
+If the connection drops, `Publish` reconnects automatically and retries once before returning an error.
+
+See [`_examples/client/`](./_examples/client/) for a runnable example.
+
 ## Configuration
 
 `NewCelerity` accepts functional options:
@@ -151,15 +182,17 @@ The task is republished to the same queue and retried up to `MaxRetries` times. 
 ## Project layout
 
 ```
-celerity.go              # Public API: NewCelerity, Start, Stop, RegisterTask, Logger
+celerity.go              # Worker API: NewCelerity, Start, Stop, RegisterTask, Logger
+client.go                # Publisher API: NewClient, Connect, Publish, Close
 internal/
-  broker/                # RabbitMQ AMQP consumer with auto-reconnect
+  broker/                # RabbitMQ AMQP consumer + publisher; Publisher/Broker interfaces
   ctxlog/                # Context key for task-scoped logger propagation
-  protocol/celery/       # Celery v2 message parser
+  protocol/celery/       # Celery v2 message parser/serialiser
   registry/              # Task name → handler function mapping (reflection-based)
   worker/                # Dispatcher + worker pool
   task/                  # Task struct
-_examples/worker/        # Runnable example
+_examples/worker/        # Runnable worker example
+_examples/client/        # Runnable publisher example
 ```
 
 ## Development
