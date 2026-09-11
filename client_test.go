@@ -103,16 +103,18 @@ func TestClient_Publish(t *testing.T) {
 			assert.Equal(t, tt.wantTaskHdr, captured.Headers["task"])
 			assert.Equal(t, id, captured.Headers["id"])
 
-			var payload struct {
-				Args   []any          `json:"0"`
-				Kwargs map[string]any `json:"1"`
-			}
-			require.NoError(t, json.Unmarshal(captured.Body, &payload))
+			var raw []json.RawMessage
+			require.NoError(t, json.Unmarshal(captured.Body, &raw))
+			require.GreaterOrEqual(t, len(raw), 2)
+			var args []any
+			var kwargs map[string]any
+			require.NoError(t, json.Unmarshal(raw[0], &args))
+			require.NoError(t, json.Unmarshal(raw[1], &kwargs))
 			if tt.wantArgs != nil {
-				assert.Equal(t, tt.wantArgs, payload.Args)
+				assert.Equal(t, tt.wantArgs, args)
 			}
 			if tt.wantKwargs != nil {
-				assert.Equal(t, tt.wantKwargs, payload.Kwargs)
+				assert.Equal(t, tt.wantKwargs, kwargs)
 			}
 
 			pub.AssertExpectations(t)
