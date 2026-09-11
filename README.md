@@ -55,7 +55,9 @@ func main() {
 
     c.RegisterTask("hello.add", AddTask, []string{"a", "b"})
 
-    c.Start(ctx)
+    if err := c.Start(ctx); err != nil {
+        log.Fatalf("failed to start: %v", err)
+    }
     <-ctx.Done()
     stop()
 

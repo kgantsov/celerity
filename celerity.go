@@ -2,7 +2,9 @@ package celerity
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	neturl "net/url"
 	"sync"
 
 	"github.com/kgantsov/celerity/internal/broker"
@@ -69,7 +71,6 @@ func WithLogger(logger *slog.Logger) Option {
 // NewCelerity creates a new Celerity server with the given broker URL, queues,
 // and optional configurations.
 func NewCelerity(brokerURL string, queues []string, opts ...Option) *Celerity {
-
 	server := &Celerity{
 		config: Config{
 			Broker: broker.BrokerConfig{
@@ -109,13 +110,17 @@ func NewCelerity(brokerURL string, queues []string, opts ...Option) *Celerity {
 // will cause every component to begin shutting down on its own, without
 // requiring Stop() to be called. Call Stop() afterwards to wait for that
 // shutdown to complete (with a bound on how long to wait).
-func (c *Celerity) Start(ctx context.Context) {
+func (c *Celerity) Start(ctx context.Context) error {
 	JobQueue := make(chan worker.Job)
 
 	if c.broker == nil {
-		c.broker = broker.NewRabbitMQBroker(
+		broker, err := newBrokerForURL(
 			ctx, c.config.Logger.With("component", "broker"), c.config.Broker,
 		)
+		if err != nil {
+			return fmt.Errorf("failed to create broker: %w", err)
+		}
+		c.broker = broker
 	}
 
 	// Start the broker background routines
@@ -155,6 +160,8 @@ func (c *Celerity) Start(ctx context.Context) {
 			}
 		}
 	}()
+
+	return nil
 }
 
 // Stop gracefully shuts down the broker, dispatcher/workers and the task
@@ -190,4 +197,21 @@ func (c *Celerity) Stop(ctx context.Context) {
 
 func (c *Celerity) RegisterTask(name string, fn any, paramNames []string) error {
 	return c.registry.Register(name, fn, paramNames)
+}
+
+// newBrokerForURL selects a Broker implementation based on the URL scheme.
+// This is the extension point for future broker backends (redis://, mongodb://, etc.).
+func newBrokerForURL(
+	ctx context.Context, logger *slog.Logger, config broker.BrokerConfig,
+) (broker.Broker, error) {
+	u, err := neturl.Parse(config.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid broker URL: %w", err)
+	}
+	switch u.Scheme {
+	case "amqp", "amqps":
+		return broker.NewRabbitMQBroker(ctx, logger, config), nil
+	default:
+		return nil, fmt.Errorf("unsupported broker scheme %q", u.Scheme)
+	}
 }

@@ -46,7 +46,10 @@ func main() {
 	)
 
 	logger.Info("starting task processor")
-	c.Start(ctx)
+	if err := c.Start(ctx); err != nil {
+		logger.Error("failed to start", "err", err)
+		os.Exit(1)
+	}
 
 	<-ctx.Done()
 	// Stop relaying further signals so a second Ctrl+C falls back to Go's
