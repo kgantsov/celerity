@@ -37,7 +37,7 @@ func TestTaskScheduler_ScheduleAndStop(t *testing.T) {
 			proto, err := celery.NewProtocol(slog.Default(), "2.0")
 			require.NoError(t, err)
 			jobQueue := make(chan Job, 10)
-			d := NewDispatcher(slog.Default(), reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{}, proto)
+			d := NewDispatcher(slog.Default(), reg, jobQueue, WorkerConfig{Count: 2}, &MockBroker{}, &MockBroker{}, proto)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			d.Run(ctx)

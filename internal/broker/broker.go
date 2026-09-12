@@ -35,10 +35,13 @@ type BrokerConfig struct {
 	PrefetchCount int
 }
 
+type BackendConfig struct {
+	URL string
+}
+
 // Publisher is the minimal interface for sending tasks to a broker.
 // Implementations only need a connection — no consumer goroutines required.
 type Publisher interface {
-	Connect() error
 	PublishMessage(msg *RawMessage) error
 	Close()
 }
@@ -49,6 +52,6 @@ type Publisher interface {
 type Broker interface {
 	Start()
 	GetMessage(ctx context.Context) (*RawMessage, error)
-	PublishMessage(message *RawMessage) error
+	PublishMessage(msg *RawMessage) error
 	Close()
 }

@@ -13,6 +13,7 @@ type Dispatcher struct {
 	logger     *slog.Logger
 	config     WorkerConfig
 	broker     broker.Broker
+	backend    broker.Publisher
 	registry   *registry.TaskRegistry
 	WorkerPool chan chan Job
 	JobQueue   chan Job
@@ -28,6 +29,7 @@ func NewDispatcher(
 	JobQueue chan Job,
 	config WorkerConfig,
 	broker broker.Broker,
+	backend broker.Publisher,
 	proto celery.Protocol,
 ) *Dispatcher {
 	WorkerPool := make(chan chan Job, config.Count)
@@ -35,6 +37,7 @@ func NewDispatcher(
 		logger:     logger,
 		config:     config,
 		broker:     broker,
+		backend:    backend,
 		registry:   registry,
 		WorkerPool: WorkerPool,
 		JobQueue:   JobQueue,
@@ -53,7 +56,9 @@ func (d *Dispatcher) Run(ctx context.Context) {
 
 	// starting n number of workers
 	for i := 0; i < d.config.Count; i++ {
-		worker := NewWorker(d.logger, d.registry, d.WorkerPool, d.config, d.broker, d.proto)
+		worker := NewWorker(
+			d.logger, d.registry, d.WorkerPool, d.config, d.broker, d.backend, d.proto,
+		)
 		worker.Start(d.ctx)
 		d.Workers = append(d.Workers, worker)
 	}

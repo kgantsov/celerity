@@ -64,9 +64,6 @@ func (c *Client) Connect() error {
 	if err != nil {
 		return err
 	}
-	if err := pub.Connect(); err != nil {
-		return err
-	}
 	c.publisher = pub
 	return nil
 }
@@ -123,7 +120,11 @@ func newPublisherForURL(brokerURL string, logger *slog.Logger) (broker.Publisher
 	}
 	switch u.Scheme {
 	case "amqp", "amqps":
-		return broker.NewRabbitMQPublisher(brokerURL, logger), nil
+		pub := broker.NewRabbitMQPublisher(brokerURL, logger)
+		if err := pub.Connect(); err != nil {
+			return nil, fmt.Errorf("connect to broker: %w", err)
+		}
+		return pub, nil
 	default:
 		return nil, fmt.Errorf("unsupported broker scheme %q", u.Scheme)
 	}

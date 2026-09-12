@@ -22,6 +22,7 @@ type Worker struct {
 	logger     *slog.Logger
 	config     WorkerConfig
 	broker     broker.Broker
+	backend    broker.Publisher
 	registry   *registry.TaskRegistry
 	WorkerPool chan chan Job
 	JobChannel chan Job
@@ -36,12 +37,14 @@ func NewWorker(
 	workerPool chan chan Job,
 	config WorkerConfig,
 	broker broker.Broker,
+	backend broker.Publisher,
 	proto celery.Protocol,
 ) *Worker {
 	return &Worker{
 		logger:     logger,
 		config:     config,
 		broker:     broker,
+		backend:    backend,
 		registry:   registry,
 		WorkerPool: workerPool,
 		JobChannel: make(chan Job),
@@ -144,7 +147,7 @@ func (w *Worker) replyToResultQueue(logger *slog.Logger, tk *task.Task, status s
 		return
 	}
 
-	w.broker.PublishMessage(msg)
+	w.backend.PublishMessage(msg)
 }
 
 // Stop signals the worker to stop listening for work requests. It is safe

@@ -22,13 +22,15 @@ func Logger(ctx context.Context) *slog.Logger {
 }
 
 type Config struct {
-	Logger *slog.Logger
-	Broker broker.BrokerConfig
-	Worker worker.WorkerConfig
+	Logger  *slog.Logger
+	Broker  broker.BrokerConfig
+	Backend broker.BackendConfig
+	Worker  worker.WorkerConfig
 }
 
 type Celerity struct {
 	broker       broker.Broker
+	backend      broker.Publisher
 	dispatcher   *worker.Dispatcher
 	registry     *registry.TaskRegistry
 	config       Config
@@ -65,6 +67,13 @@ func WithAcksLate(acksLate bool) Option {
 func WithLogger(logger *slog.Logger) Option {
 	return func(s *Celerity) {
 		s.config.Logger = logger
+	}
+}
+
+// WithBackendURL sets the backend URL for the Celerity server
+func WithBackendURL(backendURL string) Option {
+	return func(s *Celerity) {
+		s.config.Backend.URL = backendURL
 	}
 }
 
@@ -123,6 +132,21 @@ func (c *Celerity) Start(ctx context.Context) error {
 		c.broker = broker
 	}
 
+	if c.config.Backend.URL == "" {
+		// c.backend = c.broker
+		c.backend = noopPublisher{}
+	} else if c.config.Backend.URL == c.config.Broker.URL {
+		c.backend = c.broker
+	} else {
+		backend, err := newBackendForURL(
+			ctx, c.config.Logger.With("component", "backend"), c.config.Backend,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create backend: %w", err)
+		}
+		c.backend = backend
+	}
+
 	// Start the broker background routines
 	c.broker.Start()
 
@@ -132,6 +156,7 @@ func (c *Celerity) Start(ctx context.Context) error {
 		JobQueue,
 		c.config.Worker,
 		c.broker,
+		c.backend,
 		c.proto,
 	)
 	c.dispatcher.Run(ctx)
@@ -200,7 +225,7 @@ func (c *Celerity) RegisterTask(name string, fn any, paramNames []string) error 
 }
 
 // newBrokerForURL selects a Broker implementation based on the URL scheme.
-// This is the extension point for future broker backends (redis://, mongodb://, etc.).
+// This is the extension point for future brokers (redis://, mongodb://, etc.).
 func newBrokerForURL(
 	ctx context.Context, logger *slog.Logger, config broker.BrokerConfig,
 ) (broker.Broker, error) {
@@ -213,5 +238,26 @@ func newBrokerForURL(
 		return broker.NewRabbitMQBroker(ctx, logger, config), nil
 	default:
 		return nil, fmt.Errorf("unsupported broker scheme %q", u.Scheme)
+	}
+}
+
+// newBackendForURL selects a Backend implementation based on the URL scheme.
+// This is the extension point for future result backends (redis://, mongodb://, etc.).
+func newBackendForURL(
+	ctx context.Context, logger *slog.Logger, config broker.BackendConfig,
+) (broker.Publisher, error) {
+	u, err := neturl.Parse(config.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid backend URL: %w", err)
+	}
+	switch u.Scheme {
+	case "amqp", "amqps":
+		pub := broker.NewRabbitMQPublisher(config.URL, logger)
+		if err := pub.Connect(); err != nil {
+			return nil, fmt.Errorf("connect to backend: %w", err)
+		}
+		return pub, nil
+	default:
+		return nil, fmt.Errorf("unsupported backend scheme %q", u.Scheme)
 	}
 }

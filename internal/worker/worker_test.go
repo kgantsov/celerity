@@ -49,7 +49,7 @@ func runWorkerJob(t *testing.T, reg *registry.TaskRegistry, msg *broker.RawMessa
 	proto, err := celery.NewProtocol(slog.Default(), "2.0")
 	require.NoError(t, err)
 	pool := make(chan chan Job, 1)
-	w := NewWorker(slog.Default(), reg, pool, config, b, proto)
+	w := NewWorker(slog.Default(), reg, pool, config, b, b, proto)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	w.Start(ctx)
@@ -186,7 +186,8 @@ func TestWorker_stopWithoutStart(t *testing.T) {
 	pool := make(chan chan Job, 1)
 	proto, err := celery.NewProtocol(slog.Default(), "2.0")
 	require.NoError(t, err)
-	w := NewWorker(slog.Default(), registry.NewTaskRegistry(slog.Default()), pool, WorkerConfig{Count: 1}, &MockBroker{}, proto)
+	mb := &MockBroker{}
+	w := NewWorker(slog.Default(), registry.NewTaskRegistry(slog.Default()), pool, WorkerConfig{Count: 1}, mb, mb, proto)
 	assert.NotPanics(t, func() { w.Stop() })
 }
 
