@@ -127,6 +127,7 @@ See [`_examples/client/`](./_examples/client/) for a runnable example.
 | `WithPrefetchCount(n)` | `5` | AMQP QoS prefetch count |
 | `WithAcksLate(bool)` | `false` | Acknowledge messages after the handler returns instead of on delivery |
 | `WithLogger(logger)` | `slog.Default()` | Structured logger used by all internal components |
+| `WithBackendURL(url)` | `""` (disabled) | Result backend URL. When omitted, task results are discarded. When set to the same URL as the broker, the existing connection is reused. Supports `amqp://` / `amqps://`. |
 
 ## Registering tasks
 
