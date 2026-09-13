@@ -51,8 +51,8 @@ func (m *MockBroker) PublishMessage(msg *broker.RawMessage) error {
 	return args.Error(0)
 }
 
-func (m *MockBroker) Close() {
-	m.Called()
+func (m *MockBroker) Close(ctx context.Context) {
+	m.Called(ctx)
 }
 
 type MockBackend struct {
@@ -74,6 +74,6 @@ func (m *MockBackend) GetResult(ctx context.Context, taskID string) ([]byte, err
 	return result, args.Error(1)
 }
 
-func (m *MockBackend) Close() {
-	m.Called()
+func (m *MockBackend) Close(ctx context.Context) {
+	m.Called(ctx)
 }

@@ -146,7 +146,7 @@ func TestCelerity_StartStop(t *testing.T) {
 
 	b := &broker.MockBroker{}
 	b.On("Start").Return()
-	b.On("Close").Return()
+	b.On("Close", mock.Anything).Return()
 	b.On("GetMessage", mock.Anything).Once().Return(msg, nil)
 	b.On("GetMessage", mock.Anything).Return((*broker.RawMessage)(nil), context.Canceled)
 
@@ -174,13 +174,13 @@ func TestCelerity_StartStop(t *testing.T) {
 	c.Stop(stopCtx)
 
 	b.AssertCalled(t, "Start")
-	b.AssertCalled(t, "Close")
+	b.AssertCalled(t, "Close", mock.Anything)
 }
 
 func TestCelerity_BrokerError(t *testing.T) {
 	broker := &broker.MockBroker{}
 	broker.On("Start").Return()
-	broker.On("Close").Return()
+	broker.On("Close", mock.Anything).Return()
 	broker.On("GetMessage", mock.Anything).Return(nil, errors.New("connection lost"))
 
 	c := NewCelerity("amqp://localhost", []string{"q"})

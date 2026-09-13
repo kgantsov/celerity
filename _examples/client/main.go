@@ -25,10 +25,10 @@ func main() {
 		logger.Error("failed to connect", "err", err)
 		os.Exit(1)
 	}
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	defer client.Close(ctx)
 
 	task, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
 		Args:  []any{5, 3},

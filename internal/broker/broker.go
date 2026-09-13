@@ -43,7 +43,7 @@ type BackendConfig struct {
 // Implementations only need a connection — no consumer goroutines required.
 type Publisher interface {
 	PublishMessage(msg *RawMessage) error
-	Close()
+	Close(ctx context.Context)
 }
 
 // Broker is the full consumer+publisher interface used by the worker.
@@ -53,5 +53,5 @@ type Broker interface {
 	Start()
 	GetMessage(ctx context.Context) (*RawMessage, error)
 	PublishMessage(msg *RawMessage) error
-	Close()
+	Close(ctx context.Context)
 }

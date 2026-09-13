@@ -18,8 +18,8 @@ func (m *MockPublisher) PublishMessage(msg *RawMessage) error {
 	return m.Called(msg).Error(0)
 }
 
-func (m *MockPublisher) Close() {
-	m.Called()
+func (m *MockPublisher) Close(ctx context.Context) {
+	m.Called(ctx)
 }
 
 type MockBroker struct {
@@ -46,6 +46,6 @@ func (m *MockBroker) PublishResult(replyTo string, correlationID string, body []
 	return args.Error(0)
 }
 
-func (m *MockBroker) Close() {
-	m.Called()
+func (m *MockBroker) Close(ctx context.Context) {
+	m.Called(ctx)
 }

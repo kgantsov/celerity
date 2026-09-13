@@ -12,4 +12,4 @@ func (noopBackend) SetResult(_ context.Context, _ string, _ []byte, _ time.Durat
 	return nil
 }
 func (noopBackend) GetResult(_ context.Context, _ string) ([]byte, error) { return nil, nil }
-func (noopBackend) Close()                                                 {}
+func (noopBackend) Close(_ context.Context)                                {}

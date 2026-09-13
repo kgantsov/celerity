@@ -125,7 +125,9 @@ func (c *Celerity) Start(ctx context.Context) error {
 
 	if c.broker == nil {
 		broker, err := newBrokerForURL(
-			ctx, c.config.Logger.With("component", "broker"), c.config.Broker,
+			ctx,
+			c.config.Logger.With("component", "broker"),
+			c.config.Broker,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create broker: %w", err)
@@ -137,7 +139,9 @@ func (c *Celerity) Start(ctx context.Context) error {
 		c.backend = noopBackend{}
 	} else {
 		b, err := newBackendForURL(
-			ctx, c.config.Logger.With("component", "backend"), c.config.Backend,
+			ctx,
+			c.config.Logger.With("component", "backend"),
+			c.config.Backend,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create backend: %w", err)
@@ -215,10 +219,10 @@ func (c *Celerity) Stop(ctx context.Context) {
 
 	// Close the broker after all tasks have acked so the AMQP connection is
 	// still alive when worker.go calls task.Delivery.Ack().
-	c.broker.Close()
+	c.broker.Close(ctx)
 	// Close the backend after the broker: SetResult is called before Ack in
 	// worker.go, so by the time broker.Close() returns the backend is idle.
-	c.backend.Close()
+	c.backend.Close(ctx)
 }
 
 func (c *Celerity) RegisterTask(name string, fn any, paramNames []string) error {
@@ -228,7 +232,9 @@ func (c *Celerity) RegisterTask(name string, fn any, paramNames []string) error 
 // newBrokerForURL selects a Broker implementation based on the URL scheme.
 // This is the extension point for future brokers (redis://, mongodb://, etc.).
 func newBrokerForURL(
-	ctx context.Context, logger *slog.Logger, config broker.BrokerConfig,
+	ctx context.Context,
+	logger *slog.Logger,
+	config broker.BrokerConfig,
 ) (broker.Broker, error) {
 	u, err := neturl.Parse(config.URL)
 	if err != nil {
@@ -245,7 +251,9 @@ func newBrokerForURL(
 // newBackendForURL selects a Backend implementation based on the URL scheme.
 // This is the extension point for future result backends (redis://, mongodb://, etc.).
 func newBackendForURL(
-	ctx context.Context, logger *slog.Logger, config broker.BackendConfig,
+	ctx context.Context,
+	logger *slog.Logger,
+	config broker.BackendConfig,
 ) (backend.Backend, error) {
 	u, err := neturl.Parse(config.URL)
 	if err != nil {

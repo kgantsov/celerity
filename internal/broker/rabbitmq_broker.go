@@ -32,7 +32,11 @@ type RabbitMQBroker struct {
 // NewRabbitMQBroker initializes a new broker instance. parentCtx signals when
 // to stop consuming (e.g. on Ctrl+C); call Close() separately to actually tear
 // down the AMQP connection once all in-flight tasks have finished.
-func NewRabbitMQBroker(parentCtx context.Context, logger *slog.Logger, config BrokerConfig) *RabbitMQBroker {
+func NewRabbitMQBroker(
+	parentCtx context.Context,
+	logger *slog.Logger,
+	config BrokerConfig,
+) *RabbitMQBroker {
 	// Derive ctx from Background, not from parentCtx. This keeps the AMQP
 	// connection alive even after parentCtx is canceled, so workers can still
 	// ack deliveries for tasks they picked up before the shutdown signal.
@@ -119,15 +123,10 @@ func (b *RabbitMQBroker) PublishMessage(msg *RawMessage) error {
 	)
 }
 
-// closeTimeout bounds how long Close() will wait for background goroutines
-// (including the AMQP connection/channel close handshakes) to finish before
-// giving up, so a stuck broker connection can never hang the whole process.
-const closeTimeout = 5 * time.Second
-
 // Close gracefully shuts down the broker, stopping all workers and active connections.
-// It never blocks longer than closeTimeout, even if the underlying AMQP
-// connection is stuck performing its close handshake with the server.
-func (b *RabbitMQBroker) Close() {
+// ctx bounds how long Close will wait; cancel it (e.g. via context.WithTimeout)
+// to cap the wait and force a shutdown if something is stuck.
+func (b *RabbitMQBroker) Close(ctx context.Context) {
 	b.closeOnce.Do(func() {
 		b.logger.Info("closing broker")
 		b.cancel() // Signal all loops and workers to stop
@@ -144,7 +143,7 @@ func (b *RabbitMQBroker) Close() {
 			// nothing can still be sending on it.
 			close(b.msgChan)
 			b.logger.Info("broker closed")
-		case <-time.After(closeTimeout):
+		case <-ctx.Done():
 			// Something (most likely the AMQP connection/channel close
 			// handshake) is stuck. Give up waiting instead of hanging the
 			// whole process forever. We deliberately do NOT close taskChan

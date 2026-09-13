@@ -31,7 +31,11 @@ func NewRabbitMQBackend(
 ) *RabbitMQBackend {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RabbitMQBackend{
-		url: url, logger: logger, parentCtx: parentCtx, ctx: ctx, cancel: cancel,
+		url:       url,
+		logger:    logger,
+		parentCtx: parentCtx,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -187,9 +191,7 @@ func (b *RabbitMQBackend) GetResult(ctx context.Context, taskID string) ([]byte,
 	}
 }
 
-const backendCloseTimeout = 5 * time.Second
-
-func (b *RabbitMQBackend) Close() {
+func (b *RabbitMQBackend) Close(ctx context.Context) {
 	b.closeOnce.Do(func() {
 		b.logger.Info("closing backend")
 		b.cancel()
@@ -203,7 +205,7 @@ func (b *RabbitMQBackend) Close() {
 		select {
 		case <-done:
 			b.logger.Info("backend closed")
-		case <-time.After(backendCloseTimeout):
+		case <-ctx.Done():
 			b.logger.Warn("timed out waiting for backend goroutine, forcing close")
 			b.connMu.Lock()
 			conn := b.conn

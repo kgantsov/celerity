@@ -94,6 +94,7 @@ func (c *Client) Connect() error {
 			broker.BackendConfig{URL: c.backendURL},
 		)
 		if err != nil {
+			pub.Close(context.Background())
 			return fmt.Errorf("connect to backend: %w", err)
 		}
 		c.backend = b
@@ -110,10 +111,15 @@ func GetResult[T any](ctx context.Context, t *Task) (T, error) {
 	return backend.NewAsyncResult[T](t.ID, t.backend).Get(ctx)
 }
 
-// Close tears down the broker connection.
-func (c *Client) Close() {
+// Close tears down the broker and backend connections.
+// ctx bounds how long Close will wait; pass a context.WithTimeout to cap
+// the wait and force shutdown if something is stuck.
+func (c *Client) Close(ctx context.Context) {
 	if c.publisher != nil {
-		c.publisher.Close()
+		c.publisher.Close(ctx)
+	}
+	if c.backend != nil {
+		c.backend.Close(ctx)
 	}
 }
 
@@ -173,7 +179,9 @@ func newPublisherForURL(brokerURL string, logger *slog.Logger) (broker.Publisher
 	switch u.Scheme {
 	case "amqp", "amqps":
 		b := broker.NewRabbitMQBroker(
-			context.Background(), logger, broker.BrokerConfig{URL: brokerURL},
+			context.Background(),
+			logger,
+			broker.BrokerConfig{URL: brokerURL},
 		)
 		if err := b.Connect(); err != nil {
 			return nil, fmt.Errorf("connect to broker: %w", err)
