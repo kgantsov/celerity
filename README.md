@@ -97,7 +97,10 @@ client := celerity.NewClient("amqp://guest:guest@localhost:5672/")
 if err := client.Connect(); err != nil {
     log.Fatal(err)
 }
-defer client.Close()
+
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+defer client.Close(ctx)
 
 task, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
     Args:  []any{5, 3},
@@ -128,7 +131,10 @@ client := celerity.NewClient(
 if err := client.Connect(); err != nil {
     log.Fatal(err)
 }
-defer client.Close()
+
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+defer client.Close(ctx)
 
 task, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
     Args: []any{5, 3},
@@ -136,9 +142,6 @@ task, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
 if err != nil {
     log.Fatal(err)
 }
-
-ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-defer cancel()
 
 result, err := celerity.GetResult[int](ctx, task)
 // result == 8
@@ -276,7 +279,7 @@ RabbitMQ → Broker → Protocol parser → Registry.Execute → handler functio
                                              Client.GetResult[T]
 ```
 
-The broker spawns one consumer goroutine per queue (Qos=1 by default). The dispatcher fans tasks out to a fixed pool of worker goroutines via a shared job channel. The result backend maintains its own AMQP connection and reconnects automatically on drops. Shutdown is driven by context cancellation and propagates through each layer with bounded timeouts: 5 s for the broker and backend connections, 10 s total for the full shutdown sequence.
+The broker spawns one consumer goroutine per queue (Qos=1 by default). The dispatcher fans tasks out to a fixed pool of worker goroutines via a shared job channel. The result backend maintains its own AMQP connection and reconnects automatically on drops. Shutdown is driven by context cancellation and propagates through each layer. The context passed to `Stop()` (worker) or `Close()` (client) bounds the entire shutdown sequence — both the task drain and the AMQP connection teardown — giving callers a single timeout to reason about.
 
 ## License
 
