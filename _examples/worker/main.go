@@ -89,7 +89,7 @@ func UpdateMetadataTask(
 func ReindexFileTask(ctx context.Context, fileID string) error {
 	log := celerity.Logger(ctx)
 	log.Info("reindexing file", "file_id", fileID)
-	time.Sleep(50 * time.Second) // Simulate some processing time
+	time.Sleep(5 * time.Second) // Simulate some processing time
 	log.Info("reindexing complete", "file_id", fileID)
 	return nil
 }
