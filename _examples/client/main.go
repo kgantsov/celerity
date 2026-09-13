@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/kgantsov/celerity"
 )
@@ -13,9 +14,12 @@ func main() {
 		Level: slog.LevelDebug,
 	}))
 
+	const brokerURL = "amqp://guest:guest@localhost:5672/"
+
 	client := celerity.NewClient(
-		"amqp://guest:guest@localhost:5672/",
+		brokerURL,
 		celerity.WithClientLogger(logger),
+		celerity.WithClientBackendURL(brokerURL),
 	)
 	if err := client.Connect(); err != nil {
 		logger.Error("failed to connect", "err", err)
@@ -23,7 +27,10 @@ func main() {
 	}
 	defer client.Close()
 
-	id, err := client.Publish(context.Background(), "hello.add", celerity.PublishOptions{
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	task, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
 		Args:  []any{5, 3},
 		Queue: "celery",
 	})
@@ -32,5 +39,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("published task", "id", id)
+	logger.Info("published task", "id", task.ID)
+
+	result, err := celerity.GetResult[int](ctx, task)
+	if err != nil {
+		logger.Error("failed to get result", "err", err)
+		os.Exit(1)
+	}
+
+	logger.Info("task result", "id", task.ID, "result", result)
 }

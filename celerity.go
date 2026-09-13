@@ -7,6 +7,7 @@ import (
 	neturl "net/url"
 	"sync"
 
+	"github.com/kgantsov/celerity/internal/backend"
 	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/kgantsov/celerity/internal/ctxlog"
 	"github.com/kgantsov/celerity/internal/protocol/celery"
@@ -30,7 +31,7 @@ type Config struct {
 
 type Celerity struct {
 	broker       broker.Broker
-	backend      broker.Publisher
+	backend      backend.Backend
 	dispatcher   *worker.Dispatcher
 	registry     *registry.TaskRegistry
 	config       Config
@@ -133,18 +134,15 @@ func (c *Celerity) Start(ctx context.Context) error {
 	}
 
 	if c.config.Backend.URL == "" {
-		// c.backend = c.broker
-		c.backend = noopPublisher{}
-	} else if c.config.Backend.URL == c.config.Broker.URL {
-		c.backend = c.broker
+		c.backend = noopBackend{}
 	} else {
-		backend, err := newBackendForURL(
+		b, err := newBackendForURL(
 			ctx, c.config.Logger.With("component", "backend"), c.config.Backend,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create backend: %w", err)
 		}
-		c.backend = backend
+		c.backend = b
 	}
 
 	// Start the broker background routines
@@ -218,6 +216,9 @@ func (c *Celerity) Stop(ctx context.Context) {
 	// Close the broker after all tasks have acked so the AMQP connection is
 	// still alive when worker.go calls task.Delivery.Ack().
 	c.broker.Close()
+	// Close the backend after the broker: SetResult is called before Ack in
+	// worker.go, so by the time broker.Close() returns the backend is idle.
+	c.backend.Close()
 }
 
 func (c *Celerity) RegisterTask(name string, fn any, paramNames []string) error {
@@ -245,18 +246,18 @@ func newBrokerForURL(
 // This is the extension point for future result backends (redis://, mongodb://, etc.).
 func newBackendForURL(
 	ctx context.Context, logger *slog.Logger, config broker.BackendConfig,
-) (broker.Publisher, error) {
+) (backend.Backend, error) {
 	u, err := neturl.Parse(config.URL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid backend URL: %w", err)
 	}
 	switch u.Scheme {
 	case "amqp", "amqps":
-		pub := broker.NewRabbitMQPublisher(config.URL, logger)
-		if err := pub.Connect(); err != nil {
+		b := backend.NewRabbitMQBackend(ctx, config.URL, logger)
+		if err := b.Connect(); err != nil {
 			return nil, fmt.Errorf("connect to backend: %w", err)
 		}
-		return pub, nil
+		return b, nil
 	default:
 		return nil, fmt.Errorf("unsupported backend scheme %q", u.Scheme)
 	}

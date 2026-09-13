@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"time"
 
 	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/stretchr/testify/mock"
@@ -51,5 +52,28 @@ func (m *MockBroker) PublishMessage(msg *broker.RawMessage) error {
 }
 
 func (m *MockBroker) Close() {
+	m.Called()
+}
+
+type MockBackend struct {
+	mock.Mock
+}
+
+func (m *MockBackend) PrepareResult(ctx context.Context, taskID string, ttl time.Duration) error {
+	return m.Called(ctx, taskID, ttl).Error(0)
+}
+
+func (m *MockBackend) SetResult(ctx context.Context, taskID string, data []byte, ttl time.Duration) error {
+	args := m.Called(ctx, taskID, data, ttl)
+	return args.Error(0)
+}
+
+func (m *MockBackend) GetResult(ctx context.Context, taskID string) ([]byte, error) {
+	args := m.Called(ctx, taskID)
+	result, _ := args.Get(0).([]byte)
+	return result, args.Error(1)
+}
+
+func (m *MockBackend) Close() {
 	m.Called()
 }

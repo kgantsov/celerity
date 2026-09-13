@@ -5,6 +5,9 @@ import (
 	"errors"
 	"log/slog"
 
+	"time"
+
+	"github.com/kgantsov/celerity/internal/backend"
 	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/kgantsov/celerity/internal/ctxlog"
 	"github.com/kgantsov/celerity/internal/protocol/celery"
@@ -22,7 +25,7 @@ type Worker struct {
 	logger     *slog.Logger
 	config     WorkerConfig
 	broker     broker.Broker
-	backend    broker.Publisher
+	backend    backend.Backend
 	registry   *registry.TaskRegistry
 	WorkerPool chan chan Job
 	JobChannel chan Job
@@ -37,7 +40,7 @@ func NewWorker(
 	workerPool chan chan Job,
 	config WorkerConfig,
 	broker broker.Broker,
-	backend broker.Publisher,
+	backend backend.Backend,
 	proto celery.Protocol,
 ) *Worker {
 	return &Worker{
@@ -90,6 +93,11 @@ func (w *Worker) Start(ctx context.Context) {
 				execCtx := ctxlog.With(w.ctx, logger)
 				result, err := w.registry.Execute(execCtx, tk.Task, tk.Args, tk.Kwargs)
 
+				// cleanupCtx is intentionally detached from w.ctx: cleanup
+				// (SetResult, Ack) must complete even when the worker context
+				// is cancelled during graceful shutdown.
+				cleanupCtx := ctxlog.With(context.Background(), logger)
+
 				if err != nil {
 					logger.Error("task execution failed", "err", err)
 					if retryable, ok := errors.AsType[task.Retryable](err); ok {
@@ -100,7 +108,7 @@ func (w *Worker) Start(ctx context.Context) {
 							msg, err := w.proto.ToRawMessage(tk)
 							if err != nil {
 								logger.Error("failed to serialize task for retry", "err", err)
-								w.replyToResultQueue(logger, tk, "FAILURE", result)
+								w.replyToResultQueue(cleanupCtx, logger, tk, "FAILURE", result)
 								continue
 							}
 
@@ -109,7 +117,7 @@ func (w *Worker) Start(ctx context.Context) {
 							}
 						} else {
 							logger.Warn("max retries reached")
-							w.replyToResultQueue(logger, tk, "FAILURE", result)
+							w.replyToResultQueue(cleanupCtx, logger, tk, "FAILURE", result)
 						}
 					}
 					if w.config.AcksLate {
@@ -118,7 +126,7 @@ func (w *Worker) Start(ctx context.Context) {
 				} else {
 					logger.Debug("task succeeded", "result", result)
 
-					w.replyToResultQueue(logger, tk, "SUCCESS", result)
+					w.replyToResultQueue(cleanupCtx, logger, tk, "SUCCESS", result)
 
 					if w.config.AcksLate {
 						tk.Delivery.Ack(false)
@@ -136,7 +144,9 @@ func (w *Worker) Start(ctx context.Context) {
 	}()
 }
 
-func (w *Worker) replyToResultQueue(logger *slog.Logger, tk *task.Task, status string, result any) {
+func (w *Worker) replyToResultQueue(
+	ctx context.Context, logger *slog.Logger, tk *task.Task, status string, result any,
+) {
 	if tk.ReplyTo == "" {
 		logger.Debug("no reply_to queue, skipping result publish")
 		return
@@ -146,8 +156,9 @@ func (w *Worker) replyToResultQueue(logger *slog.Logger, tk *task.Task, status s
 		logger.Error("failed to build reply message", "err", err)
 		return
 	}
-
-	w.backend.PublishMessage(msg)
+	if err := w.backend.SetResult(ctx, tk.ReplyTo, msg.Body, 24*time.Hour); err != nil {
+		logger.Error("failed to set result", "err", err)
+	}
 }
 
 // Stop signals the worker to stop listening for work requests. It is safe

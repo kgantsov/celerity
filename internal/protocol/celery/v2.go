@@ -109,9 +109,11 @@ func (p *CeleryPtotocolV2) ToRawMessage(tk *task.Task) (*broker.RawMessage, erro
 	}
 
 	return &broker.RawMessage{
-		Queue:   tk.QueueName,
-		Body:    body,
-		Headers: headers,
+		Queue:         tk.QueueName,
+		Body:          body,
+		Headers:       headers,
+		ReplyTo:       tk.ReplyTo,
+		CorrelationID: tk.CorrelationId,
 	}, nil
 }
 

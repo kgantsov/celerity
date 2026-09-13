@@ -5,7 +5,8 @@ A Go implementation of a [Celery](https://docs.celeryq.dev/)-compatible task que
 ## Features
 
 - Consumes tasks published by Python Celery (v2 message format)
-- Publishes tasks to Celery queues from Go (broker URL auto-selects the backend)
+- Publishes tasks to Celery queues from Go
+- Retrieves task results from Go using generics (`GetResult[T]`)
 - Positional and keyword argument support with automatic type coercion from JSON
 - Configurable worker pool and AMQP prefetch count
 - Optional late acknowledgement (`AcksLate`)
@@ -89,7 +90,7 @@ See [`_examples/worker/`](./_examples/worker/) for a full working example.
 
 ## Publishing tasks from Go
 
-Use `Client` to enqueue tasks without running a worker. The broker URL determines the backend (currently `amqp://` / `amqps://`):
+Use `Client` to enqueue tasks without running a worker:
 
 ```go
 client := celerity.NewClient("amqp://guest:guest@localhost:5672/")
@@ -98,7 +99,7 @@ if err := client.Connect(); err != nil {
 }
 defer client.Close()
 
-id, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
+task, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
     Args:  []any{5, 3},
     Queue: "celery", // defaults to "celery" if omitted
 })
@@ -113,13 +114,53 @@ id, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
 | `Kwargs` | `nil` | Keyword arguments |
 | `TaskID` | auto UUID | Celery task ID |
 
-If the connection drops, `Publish` reconnects automatically and retries once before returning an error.
-
 See [`_examples/client/`](./_examples/client/) for a runnable example.
+
+## Retrieving task results
+
+Pass `WithClientBackendURL` when creating the client, then call `GetResult[T]` on the returned `*Task`:
+
+```go
+client := celerity.NewClient(
+    "amqp://guest:guest@localhost:5672/",
+    celerity.WithClientBackendURL("amqp://guest:guest@localhost:5672/"),
+)
+if err := client.Connect(); err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+
+task, err := client.Publish(ctx, "hello.add", celerity.PublishOptions{
+    Args: []any{5, 3},
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+defer cancel()
+
+result, err := celerity.GetResult[int](ctx, task)
+// result == 8
+```
+
+`GetResult[T]` blocks until the worker publishes the result, the context deadline is exceeded, or the connection drops. The type parameter `T` must match what the registered handler returns.
+
+For the worker to send results back, configure it with `WithBackendURL`:
+
+```go
+c := celerity.NewCelerity(
+    "amqp://guest:guest@localhost:5672/",
+    []string{"celery"},
+    celerity.WithBackendURL("amqp://guest:guest@localhost:5672/"),
+)
+```
+
+Without `WithBackendURL`, task results are silently discarded by the worker.
 
 ## Configuration
 
-`NewCelerity` accepts functional options:
+### Worker options (`NewCelerity`)
 
 | Option | Default | Description |
 |---|---|---|
@@ -127,7 +168,14 @@ See [`_examples/client/`](./_examples/client/) for a runnable example.
 | `WithPrefetchCount(n)` | `5` | AMQP QoS prefetch count |
 | `WithAcksLate(bool)` | `false` | Acknowledge messages after the handler returns instead of on delivery |
 | `WithLogger(logger)` | `slog.Default()` | Structured logger used by all internal components |
-| `WithBackendURL(url)` | `""` (disabled) | Result backend URL. When omitted, task results are discarded. When set to the same URL as the broker, the existing connection is reused. Supports `amqp://` / `amqps://`. |
+| `WithBackendURL(url)` | `""` (disabled) | Result backend URL. When set, the worker publishes task results so clients can retrieve them. Supports `amqp://` / `amqps://`. |
+
+### Client options (`NewClient`)
+
+| Option | Default | Description |
+|---|---|---|
+| `WithClientLogger(logger)` | `slog.Default()` | Structured logger |
+| `WithClientBackendURL(url)` | `""` (disabled) | Result backend URL. Required to use `GetResult`. Supports `amqp://` / `amqps://`. |
 
 ## Registering tasks
 
@@ -186,8 +234,9 @@ The task is republished to the same queue and retried up to `MaxRetries` times. 
 
 ```
 celerity.go              # Worker API: NewCelerity, Start, Stop, RegisterTask, Logger
-client.go                # Publisher API: NewClient, Connect, Publish, Close
+client.go                # Publisher API: NewClient, Connect, Publish, GetResult, Close
 internal/
+  backend/               # Result backend interface + RabbitMQ implementation
   broker/                # RabbitMQ AMQP consumer + publisher; Publisher/Broker interfaces
   ctxlog/                # Context key for task-scoped logger propagation
   protocol/celery/       # Celery v2 message parser/serialiser
@@ -195,7 +244,7 @@ internal/
   worker/                # Dispatcher + worker pool
   task/                  # Task struct
 _examples/worker/        # Runnable worker example
-_examples/client/        # Runnable publisher example
+_examples/client/        # Runnable publisher + result retrieval example
 ```
 
 ## Development
@@ -221,9 +270,13 @@ docker-compose up -d
 
 ```
 RabbitMQ → Broker → Protocol parser → Registry.Execute → handler function
+                                                        ↓
+                                             Backend.SetResult → result queue
+                                                        ↑
+                                             Client.GetResult[T]
 ```
 
-The broker spawns one consumer goroutine per queue (Qos=1 by default). The dispatcher fans tasks out to a fixed pool of worker goroutines via a shared job channel. Shutdown is driven by context cancellation and propagates through each layer with bounded timeouts: 5 s for the broker connection, 10 s total for the full shutdown sequence.
+The broker spawns one consumer goroutine per queue (Qos=1 by default). The dispatcher fans tasks out to a fixed pool of worker goroutines via a shared job channel. The result backend maintains its own AMQP connection and reconnects automatically on drops. Shutdown is driven by context cancellation and propagates through each layer with bounded timeouts: 5 s for the broker and backend connections, 10 s total for the full shutdown sequence.
 
 ## License
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/kgantsov/celerity/internal/backend"
 	"github.com/kgantsov/celerity/internal/broker"
 	"github.com/kgantsov/celerity/internal/protocol/celery"
 	"github.com/kgantsov/celerity/internal/registry"
@@ -13,7 +14,7 @@ type Dispatcher struct {
 	logger     *slog.Logger
 	config     WorkerConfig
 	broker     broker.Broker
-	backend    broker.Publisher
+	backend    backend.Backend
 	registry   *registry.TaskRegistry
 	WorkerPool chan chan Job
 	JobQueue   chan Job
@@ -29,7 +30,7 @@ func NewDispatcher(
 	JobQueue chan Job,
 	config WorkerConfig,
 	broker broker.Broker,
-	backend broker.Publisher,
+	backend backend.Backend,
 	proto celery.Protocol,
 ) *Dispatcher {
 	WorkerPool := make(chan chan Job, config.Count)

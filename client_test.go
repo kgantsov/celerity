@@ -84,7 +84,7 @@ func TestClient_Publish(t *testing.T) {
 			client := NewClient("amqp://localhost")
 			client.publisher = pub
 
-			id, err := client.Publish(context.Background(), tt.taskName, tt.opts)
+			task, err := client.Publish(context.Background(), tt.taskName, tt.opts)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -93,15 +93,15 @@ func TestClient_Publish(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.NotEmpty(t, id)
+			assert.NotEmpty(t, task.ID)
 			if tt.opts.TaskID != "" {
-				assert.Equal(t, tt.opts.TaskID, id)
+				assert.Equal(t, tt.opts.TaskID, task.ID)
 			}
 
 			require.NotNil(t, captured)
 			assert.Equal(t, tt.wantQueue, captured.Queue)
 			assert.Equal(t, tt.wantTaskHdr, captured.Headers["task"])
-			assert.Equal(t, id, captured.Headers["id"])
+			assert.Equal(t, task.ID, captured.Headers["id"])
 
 			var raw []json.RawMessage
 			require.NoError(t, json.Unmarshal(captured.Body, &raw))
@@ -144,13 +144,13 @@ func TestClient_Publish_generatesUniqueIDs(t *testing.T) {
 	client.publisher = pub
 	ctx := context.Background()
 
-	id1, err := client.Publish(ctx, "task", PublishOptions{})
+	task1, err := client.Publish(ctx, "task", PublishOptions{})
 	require.NoError(t, err)
-	id2, err := client.Publish(ctx, "task", PublishOptions{})
+	task2, err := client.Publish(ctx, "task", PublishOptions{})
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, id1)
-	assert.NotEmpty(t, id2)
-	assert.NotEqual(t, id1, id2)
+	assert.NotEmpty(t, task1.ID)
+	assert.NotEmpty(t, task2.ID)
+	assert.NotEqual(t, task1.ID, task2.ID)
 }
 

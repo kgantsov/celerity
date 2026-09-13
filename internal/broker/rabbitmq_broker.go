@@ -47,6 +47,21 @@ func NewRabbitMQBroker(parentCtx context.Context, logger *slog.Logger, config Br
 	}
 }
 
+// Connect establishes a single AMQP connection without starting any consumer
+// goroutines. Use this when only publishing is needed (e.g. Client). Call
+// Start() instead when you also need to consume.
+func (b *RabbitMQBroker) Connect() error {
+	conn, err := amqp.Dial(b.config.URL)
+	if err != nil {
+		return fmt.Errorf("connect to RabbitMQ: %w", err)
+	}
+	b.connMu.Lock()
+	b.conn = conn
+	b.connMu.Unlock()
+	b.logger.Info("connected to RabbitMQ", "url", b.config.URL)
+	return nil
+}
+
 // Start launches the background connection manager and workers.
 func (b *RabbitMQBroker) Start() {
 	b.wg.Add(1)
@@ -95,9 +110,11 @@ func (b *RabbitMQBroker) PublishMessage(msg *RawMessage) error {
 		false,
 		false,
 		amqp.Publishing{
-			ContentType: "application/json",
-			Headers:     msg.Headers,
-			Body:        msg.Body,
+			ContentType:   "application/json",
+			Headers:       msg.Headers,
+			Body:          msg.Body,
+			ReplyTo:       msg.ReplyTo,
+			CorrelationId: msg.CorrelationID,
 		},
 	)
 }
@@ -134,6 +151,16 @@ func (b *RabbitMQBroker) Close() {
 			// here: a goroutine may still be alive and could send on it,
 			// which would panic if the channel were closed.
 			b.logger.Warn("timed out waiting for broker goroutines, forcing shutdown")
+		}
+
+		// If Start() was never called (publish-only mode via Connect()),
+		// manageConnection never ran so b.conn was never closed — do it here.
+		b.connMu.Lock()
+		conn := b.conn
+		b.conn = nil
+		b.connMu.Unlock()
+		if conn != nil {
+			conn.CloseDeadline(time.Now().Add(2 * time.Second))
 		}
 	})
 }
