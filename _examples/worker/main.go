@@ -34,7 +34,7 @@ func main() {
 		celerity.WithPrefetchCount(5),
 		celerity.WithAcksLate(true),
 		celerity.WithLogger(logger),
-		celerity.WithBackendURL("amqp://guest:guest@localhost:5672/"),
+		celerity.WithBackendURL("redis://localhost:6379/0"),
 	)
 
 	c.RegisterTask("hello.add", AddTask, []string{"a", "b"})

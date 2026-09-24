@@ -147,8 +147,17 @@ func (w *Worker) Start(ctx context.Context) {
 func (w *Worker) replyToResultQueue(
 	ctx context.Context, logger *slog.Logger, tk *task.Task, status string, result any,
 ) {
-	if tk.ReplyTo == "" {
-		logger.Debug("no reply_to queue, skipping result publish")
+	// Celery always sets reply_to (it falls back to a per-process thread_oid,
+	// not the task id), so it can't be used to detect an rpc://-style backend.
+	// A database backend like Redis looks results up by the task's own id,
+	// which Celery always sets as the correlation id — gating on ReplyTo here
+	// would silently drop every result for a real Celery client using redis://.
+	taskID := tk.CorrelationId
+	if taskID == "" {
+		taskID = tk.ID
+	}
+	if taskID == "" {
+		logger.Debug("no task id, skipping result publish")
 		return
 	}
 	msg, err := w.proto.BuildReplyMessage(tk, status, result)
@@ -156,7 +165,7 @@ func (w *Worker) replyToResultQueue(
 		logger.Error("failed to build reply message", "err", err)
 		return
 	}
-	if err := w.backend.SetResult(ctx, tk.ReplyTo, msg.Body, 24*time.Hour); err != nil {
+	if err := w.backend.SetResult(ctx, taskID, msg.Body, 24*time.Hour); err != nil {
 		logger.Error("failed to set result", "err", err)
 	}
 }
