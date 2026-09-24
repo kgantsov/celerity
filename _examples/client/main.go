@@ -15,11 +15,12 @@ func main() {
 	}))
 
 	const brokerURL = "amqp://guest:guest@localhost:5672/"
+	const backendURL = "redis://localhost:6379/0"
 
 	client := celerity.NewClient(
 		brokerURL,
 		celerity.WithClientLogger(logger),
-		celerity.WithClientBackendURL(brokerURL),
+		celerity.WithClientBackendURL(backendURL),
 	)
 	if err := client.Connect(); err != nil {
 		logger.Error("failed to connect", "err", err)

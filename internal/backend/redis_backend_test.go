@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -56,16 +57,32 @@ func TestRedisBackend_GetResult_WaitsForKey(t *testing.T) {
 	ctx := context.Background()
 
 	done := make(chan struct{})
+	var setErr error
 	go func() {
 		defer close(done)
 		time.Sleep(50 * time.Millisecond)
-		require.NoError(t, b.SetResult(ctx, "task-2", []byte(`{"status":"SUCCESS"}`), time.Minute))
+		setErr = b.SetResult(ctx, "task-2", []byte(`{"status":"SUCCESS"}`), time.Minute)
 	}()
 
 	val, err := b.GetResult(ctx, "task-2")
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"status":"SUCCESS"}`, string(val))
+
 	<-done
+	require.NoError(t, setErr)
+}
+
+func TestRedisBackend_ResultKey(t *testing.T) {
+	b := &RedisBackend{}
+
+	// Correlation id (the real task id) wins even when ReplyTo is set, since
+	// a real Celery client using redis:// as its backend always sets ReplyTo
+	// to its own thread_oid, never the task id.
+	assert.Equal(t, "corr-1", b.ResultKey(&task.Task{
+		ID: "id-1", CorrelationId: "corr-1", ReplyTo: "some-thread-oid",
+	}))
+	// Falls back to ID when CorrelationId is unset.
+	assert.Equal(t, "id-1", b.ResultKey(&task.Task{ID: "id-1"}))
 }
 
 func TestRedisBackend_GetResult_ContextCanceled(t *testing.T) {

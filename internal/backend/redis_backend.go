@@ -8,6 +8,8 @@ import (
 	"time"
 
 	redis "github.com/redis/go-redis/v9"
+
+	"github.com/kgantsov/celerity/internal/task"
 )
 
 type RedisBackend struct {
@@ -79,6 +81,16 @@ func (b *RedisBackend) GetResult(ctx context.Context, taskID string) ([]byte, er
 		case <-ticker.C:
 		}
 	}
+}
+
+// ResultKey looks results up by the task's own id: Celery always sets
+// correlation id to the task id regardless of backend, while ReplyTo is
+// only meaningful to AMQP-style backends (see RabbitMQBackend.ResultKey).
+func (b *RedisBackend) ResultKey(tk *task.Task) string {
+	if tk.CorrelationId != "" {
+		return tk.CorrelationId
+	}
+	return tk.ID
 }
 
 func (b *RedisBackend) Close(ctx context.Context) {
