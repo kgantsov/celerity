@@ -9,6 +9,8 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"github.com/kgantsov/celerity/internal/task"
 )
 
 type RabbitMQBackend struct {
@@ -189,6 +191,15 @@ func (b *RabbitMQBackend) GetResult(ctx context.Context, taskID string) ([]byte,
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// ResultKey is the queue PrepareResult/SetResult publish results to. It must
+// stay ReplyTo, not the correlation/task id: SetResult publishes with
+// routing key = this value, and a real rpc://-style Celery client consumes
+// from the reply queue it declared itself, named by ReplyTo (its per-process
+// thread_oid), not by the task id.
+func (b *RabbitMQBackend) ResultKey(tk *task.Task) string {
+	return tk.ReplyTo
 }
 
 func (b *RabbitMQBackend) Close(ctx context.Context) {

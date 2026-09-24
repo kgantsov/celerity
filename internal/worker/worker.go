@@ -147,8 +147,9 @@ func (w *Worker) Start(ctx context.Context) {
 func (w *Worker) replyToResultQueue(
 	ctx context.Context, logger *slog.Logger, tk *task.Task, status string, result any,
 ) {
-	if tk.ReplyTo == "" {
-		logger.Debug("no reply_to queue, skipping result publish")
+	taskID := w.backend.ResultKey(tk)
+	if taskID == "" {
+		logger.Debug("no task id, skipping result publish")
 		return
 	}
 	msg, err := w.proto.BuildReplyMessage(tk, status, result)
@@ -156,7 +157,7 @@ func (w *Worker) replyToResultQueue(
 		logger.Error("failed to build reply message", "err", err)
 		return
 	}
-	if err := w.backend.SetResult(ctx, tk.ReplyTo, msg.Body, 24*time.Hour); err != nil {
+	if err := w.backend.SetResult(ctx, taskID, msg.Body, 24*time.Hour); err != nil {
 		logger.Error("failed to set result", "err", err)
 	}
 }

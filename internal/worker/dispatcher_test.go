@@ -68,7 +68,9 @@ func TestDispatcher_DispatchesJobsToWorkers(t *testing.T) {
 			proto, err := celery.NewProtocol(slog.Default(), "2.0")
 			require.NoError(t, err)
 			jobQueue := make(chan Job, tt.jobCount)
-			d := NewDispatcher(slog.Default(), reg, jobQueue, WorkerConfig{Count: tt.workers}, &MockBroker{}, &MockBackend{}, proto)
+			mb := &MockBackend{}
+			mb.On("SetResult", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+			d := NewDispatcher(slog.Default(), reg, jobQueue, WorkerConfig{Count: tt.workers}, &MockBroker{}, mb, proto)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()

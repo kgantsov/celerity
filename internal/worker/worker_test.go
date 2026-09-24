@@ -87,8 +87,11 @@ func TestWorker_successAcks(t *testing.T) {
 			delivery := &MockDelivery{}
 			delivery.On("Ack", false).Return(nil)
 
+			mb := &MockBackend{}
+			mb.On("SetResult", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
 			msg := newTestMsg(t, "add", tt.args, tt.kwargs, delivery, "", "", 0)
-			runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, &MockBroker{}, &MockBackend{})
+			runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, &MockBroker{}, mb)
 
 			delivery.AssertCalled(t, "Ack", false)
 			delivery.AssertNotCalled(t, "Nack", mock.Anything)
@@ -203,14 +206,14 @@ func TestWorker_publishesSuccessResult(t *testing.T) {
 
 	var capturedData []byte
 	mb := &MockBackend{}
-	mb.On("SetResult", mock.Anything, "test-id", mock.Anything, mock.Anything).
+	mb.On("SetResult", mock.Anything, "corr-id-123", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { capturedData = args[2].([]byte) }).
 		Return(nil)
 
 	msg := newTestMsg(t, "add", []any{float64(3), float64(4)}, map[string]any{}, delivery, "test-id", "corr-id-123", 0)
 	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, &MockBroker{}, mb)
 
-	mb.AssertCalled(t, "SetResult", mock.Anything, "test-id", mock.Anything, mock.Anything)
+	mb.AssertCalled(t, "SetResult", mock.Anything, "corr-id-123", mock.Anything, mock.Anything)
 	require.NotNil(t, capturedData)
 
 	var reply map[string]any
@@ -220,7 +223,29 @@ func TestWorker_publishesSuccessResult(t *testing.T) {
 	assert.Equal(t, float64(7), reply["result"])
 }
 
-func TestWorker_doesNotPublishResultWithoutReplyTo(t *testing.T) {
+// TestWorker_publishesResultWithoutReplyTo covers a real Celery client using
+// a database backend (e.g. redis://): Celery only sets the AMQP reply_to
+// property for rpc://-style backends, so a database backend must still get
+// its result keyed by the task's correlation id even when reply_to is empty.
+func TestWorker_publishesResultWithoutReplyTo(t *testing.T) {
+	reg := registry.NewTaskRegistry(slog.Default())
+	require.NoError(t, reg.Register(
+		"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
+	))
+
+	delivery := &MockDelivery{}
+	delivery.On("Ack", false).Return(nil)
+
+	mb := &MockBackend{}
+	mb.On("SetResult", mock.Anything, "corr-id-789", mock.Anything, mock.Anything).Return(nil)
+
+	msg := newTestMsg(t, "add", []any{float64(1), float64(2)}, map[string]any{}, delivery, "", "corr-id-789", 0)
+	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, &MockBroker{}, mb)
+
+	mb.AssertCalled(t, "SetResult", mock.Anything, "corr-id-789", mock.Anything, mock.Anything)
+}
+
+func TestWorker_doesNotPublishResultWithoutTaskID(t *testing.T) {
 	reg := registry.NewTaskRegistry(slog.Default())
 	require.NoError(t, reg.Register(
 		"add", func(a, b int) (int, error) { return a + b, nil }, []string{"a", "b"},
@@ -231,7 +256,13 @@ func TestWorker_doesNotPublishResultWithoutReplyTo(t *testing.T) {
 
 	mb := &MockBackend{}
 
-	msg := newTestMsg(t, "add", []any{float64(1), float64(2)}, map[string]any{}, delivery, "", "", 0)
+	body, err := json.Marshal([]any{[]any{float64(1), float64(2)}, map[string]any{}, nil})
+	require.NoError(t, err)
+	msg := &broker.RawMessage{
+		Headers:  map[string]any{"task": "add", "retries": int8(0)},
+		Body:     body,
+		Delivery: delivery,
+	}
 	runWorkerJob(t, reg, msg, WorkerConfig{Count: 1}, &MockBroker{}, mb)
 
 	mb.AssertNotCalled(t, "SetResult", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -249,7 +280,7 @@ func TestWorker_publishesFailureOnMaxRetries(t *testing.T) {
 
 	var capturedData []byte
 	mb := &MockBackend{}
-	mb.On("SetResult", mock.Anything, "test-id", mock.Anything, mock.Anything).
+	mb.On("SetResult", mock.Anything, "corr-id-456", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { capturedData = args[2].([]byte) }).
 		Return(nil)
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/kgantsov/celerity/internal/broker"
+	"github.com/kgantsov/celerity/internal/task"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -76,4 +77,17 @@ func (m *MockBackend) GetResult(ctx context.Context, taskID string) ([]byte, err
 
 func (m *MockBackend) Close(ctx context.Context) {
 	m.Called(ctx)
+}
+
+// ResultKey mimics a database-style backend (correlation id, falling back to
+// task id) rather than going through testify's expectation machinery: it's
+// pure derivation with no side effect worth asserting on, and requiring
+// every test to stub it would be noise. Backend-specific ResultKey behavior
+// (e.g. RabbitMQBackend staying on ReplyTo) is covered by that backend's own
+// tests.
+func (m *MockBackend) ResultKey(tk *task.Task) string {
+	if tk.CorrelationId != "" {
+		return tk.CorrelationId
+	}
+	return tk.ID
 }

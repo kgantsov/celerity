@@ -266,6 +266,12 @@ func newBackendForURL(
 			return nil, fmt.Errorf("connect to backend: %w", err)
 		}
 		return b, nil
+	case "redis", "rediss":
+		b := backend.NewRedisBackend(ctx, config.URL, logger)
+		if err := b.Connect(); err != nil {
+			return nil, fmt.Errorf("connect to backend: %w", err)
+		}
+		return b, nil
 	default:
 		return nil, fmt.Errorf("unsupported backend scheme %q", u.Scheme)
 	}
